@@ -1,0 +1,13 @@
+{
+  "name": "proofgate",
+  "description": "The acceptance gate that doesn't accept 'I think it works.' A three-layer delivery gate for AI-assisted development: mechanical checks (tests, secrets, PII, untested changes), a judgment checklist that demands evidence for every claim, and a self-improvement loop that turns every failure into a permanent guard.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Paulo Eduardo",
+    "url": "https://github.com/ChrnX0"
+  },
+  "homepage": "https://github.com/ChrnX0/proofgate",
+  "repository": "https://github.com/ChrnX0/proofgate",
+  "license": "MIT",
+  "keywords": ["quality-gate", "verification", "ai-agents", "definition-of-done", "code-review", "evidence"]
+}

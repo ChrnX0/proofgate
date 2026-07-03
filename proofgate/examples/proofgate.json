@@ -1,0 +1,28 @@
+{
+  "$comment": "ProofGate config — every key is optional. Drop this file at your repo root as proofgate.json. Without it, ProofGate auto-detects your stack (pnpm/npm/yarn/bun scripts, Cargo, Go, Python).",
+
+  "commands": {
+    "typecheck": "pnpm typecheck",
+    "test": "pnpm test",
+    "build": "pnpm build"
+  },
+
+  "coupledFiles": [
+    {
+      "a": "apps/web/src/lib/db.ts",
+      "b": "db/schema.sql",
+      "reason": "the embedded dev schema and the production SQL mirror must move together"
+    },
+    {
+      "a": "packages/core/src/api-contract.ts",
+      "b": "apps/mobile/src/lib/api-types.ts",
+      "reason": "server contract and mobile client types drift silently"
+    }
+  ],
+
+  "piiTerms": "password|ssn|cpf|credit.?card|cvv|phone|e-?mail|birth.?date|medical|diagnosis|address",
+
+  "sourceGlobs": "src/|lib/|app/",
+
+  "envExample": ".env.example"
+}

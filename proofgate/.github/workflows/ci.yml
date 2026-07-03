@@ -1,0 +1,19 @@
+name: ci
+# ProofGate gates itself: every guard is proven on BOTH paths (fires on the sin,
+# stays quiet on the clean diff) before anything lands on main.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard acceptance tests (positive + negative paths)
+        run: bash tests/run-tests.sh
+      - name: Shell hygiene (shellcheck)
+        run: |
+          shellcheck -S warning skills/proofgate/scripts/verify.sh \
+            skills/proofgate/scripts/guards.d/*.sh install.sh || true

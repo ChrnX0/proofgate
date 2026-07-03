@@ -1,0 +1,24 @@
+{
+  "name": "proofgate",
+  "owner": {
+    "name": "Paulo Eduardo",
+    "url": "https://github.com/ChrnX0"
+  },
+  "metadata": {
+    "description": "ProofGate — the acceptance gate that doesn't accept 'I think it works.'",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "proofgate",
+      "source": "./",
+      "description": "Three-layer delivery gate: mechanical checks with evidence, a judgment checklist, and a self-improvement loop. Born from real production scars in AI-assisted development.",
+      "author": {
+        "name": "Paulo Eduardo",
+        "url": "https://github.com/ChrnX0"
+      },
+      "license": "MIT",
+      "keywords": ["quality-gate", "verification", "ai-agents", "definition-of-done"]
+    }
+  ]
+}

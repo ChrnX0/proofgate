@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Guard: <what it catches, in one line>.
+# <Why it matters — the scar: what shipped/broke the day this became a rule.>
+#
+# Contract (that's ALL there is to it):
+#   env  PROOFGATE_BASE   — git ref to diff against (always set by the runner)
+#   env  PROOFGATE_CFG    — path to proofgate.json (may not exist)
+#   env  PROOFGATE_STRICT — "1" when --strict (rarely needed; the runner promotes warns)
+#   exit 0 = pass · 1 = FAIL (blocks the gate) · 2 = WARN (must be justified)
+#   print ONE ✅/⚠️/❌ line (the runner streams your output verbatim)
+#
+# Rename to NN-name.sh (NN orders execution) and drop it in guards.d/ — done.
+set -uo pipefail
+BASE="${PROOFGATE_BASE:?}"
+
+HITS=$(git diff "$BASE"..HEAD | grep -E '^\+' | grep -Ec 'YOUR_PATTERN_HERE' || true)
+
+if [ "${HITS:-0}" -gt 0 ]; then
+  echo "⚠️  my-guard: $HITS added line(s) look like <the problem> — <what to do>"
+  exit 2
+fi
+echo "✅ my-guard: clean"
+exit 0

@@ -1,0 +1,40 @@
+name: "ProofGate"
+description: "The acceptance gate that doesn't accept 'I think it works.' Runs ProofGate's mechanical gate in CI: tests, secrets in diff, PII in logs, untested changes, env drift, coupled files."
+author: "Paulo Eduardo (ChrnX0)"
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  build:
+    description: "Also run the build step (recommended on release branches)"
+    required: false
+    default: "false"
+  strict:
+    description: "Treat warnings as failures"
+    required: false
+    default: "false"
+  base:
+    description: "Git ref to diff against (default: merge-base with the default branch)"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run ProofGate mechanical gate
+      shell: bash
+      run: |
+        ARGS=""
+        [ "${{ inputs.build }}" = "true" ] && ARGS="$ARGS --build"
+        [ "${{ inputs.strict }}" = "true" ] && ARGS="$ARGS --strict"
+        [ -n "${{ inputs.base }}" ] && ARGS="$ARGS --base ${{ inputs.base }}"
+        git fetch origin +refs/heads/*:refs/remotes/origin/* --quiet || true
+        bash "${{ github.action_path }}/skills/proofgate/scripts/verify.sh" $ARGS --report proofgate-report.md
+    - name: Upload report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: proofgate-report
+        path: proofgate-report.md
+        if-no-files-found: ignore
