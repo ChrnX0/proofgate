@@ -29,7 +29,7 @@
   "guardsDirs": [".proofgate-guards"],
 
   "$comment_secrets": "Extra escape hatches for the secrets guard: regexes to allow, plus the always-available inline `proofgate-allow` comment and the .proofgateignore fingerprint file.",
-  "secretAllowlist": ["AKIAEXAMPLEKNOWNTESTONLY"],
+  "secretAllowlist": ["test-token-[0-9]+", "EXAMPLE_KEY_[A-Z]+"],
 
   "$comment_smoke": "Production smoke run only under --smoke. Each entry is a GET (url + optional status/expect-body-regex) OR a command (cmd, exit 0 = pass). Never put a real credential in url/headers — use a cmd that reads it from the environment.",
   "smoke": [
