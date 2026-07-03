@@ -34,4 +34,5 @@ jobs:
             skills/proofgate/scripts/lib.sh \
             skills/proofgate/scripts/guards.d/*.sh \
             hooks/*.sh \
-            install.sh
+            install.sh \
+            tests/run-tests.sh

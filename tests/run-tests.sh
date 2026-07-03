@@ -8,7 +8,7 @@
 # Positive AND negative paths for everything: a guard that never fires is as broken
 # as one that always does.
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 ROOT="$(pwd)"
 GUARDS="$ROOT/skills/proofgate/scripts/guards.d"
 VERIFY="$ROOT/skills/proofgate/scripts/verify.sh"
@@ -29,7 +29,7 @@ caso() { # caso <name> <expected-exit> <guard-file> <setup-fn>
   local nome="$1" esperado="$2" guard="$3" setup="$4"
   local tmp; tmp="$(mktemp -d)"
   (
-    cd "$tmp"
+    cd "$tmp" || exit 1
     git init -q && git config user.email t@t && git config user.name t
     git commit -q --allow-empty -m base
     "$setup"
@@ -48,7 +48,7 @@ caso_verify() { # caso_verify <name> <expected-exit> <setup-fn> <assert-fn> [ver
   local tmp remote; tmp="$(mktemp -d)"; remote="$(mktemp -d)"
   ( cd "$remote" && git init -q --bare ) >/dev/null 2>&1
   (
-    cd "$tmp"
+    cd "$tmp" || exit 1
     git init -q -b main && git config user.email t@t && git config user.name t
     printf '{"commands":{"typecheck":"true","test":"true","build":"true","lint":"true"}}\n' > proofgate.json
     git add -A && git commit -qm base
@@ -72,7 +72,7 @@ caso_hook() { # caso_hook <name> <hook> <expected-exit> <stdin-json> <setup-fn> 
   local nome="$1" hook="$2" esperado="$3" input="$4" setup="$5" substr="${6:-}"
   local tmp; tmp="$(mktemp -d)"
   (
-    cd "$tmp"
+    cd "$tmp" || exit 1
     git init -q -b main && git config user.email t@t && git config user.name t
     "$setup"           # opt-in setups create proofgate.json / .proofgate themselves
     git add -A && git commit -qm base
@@ -253,13 +253,36 @@ caso_hook "stop-guard: stop_hook_active → allow" stop-guard.sh 0 '{"stop_hook_
 
 # push-guard with a FRESH verdict → allow (needs the verdict written for real HEAD)
 tmpf="$(mktemp -d)"
-( cd "$tmpf"; git init -q -b main; git config user.email t@t; git config user.name t
+( cd "$tmpf" || exit 1; git init -q -b main; git config user.email t@t; git config user.name t
   printf '{"pushGuard":true}\n' > proofgate.json; mkdir -p .proofgate; cp "$LIB" .proofgate/lib.sh
   git add -A; git commit -qm base
   printf '{"sha":"%s","pass":true}\n' "$(git rev-parse HEAD)" > .git/proofgate-verdict.json ) >/dev/null 2>&1
 code=0; ( cd "$tmpf"; printf '%s' "$(ev 'git push origin main')" | bash "$ROOT/hooks/push-guard.sh" ) >/dev/null 2>&1 || code=$?
 if [ "$code" = 0 ]; then echo "PASS  push-guard: fresh+pass → allow (exit 0)"; PASS=$((PASS+1)); else echo "FAIL  push-guard: fresh+pass → expected 0 got $code"; FAIL=$((FAIL+1)); fi
 rm -rf "$tmpf"
+
+echo "══ config walkers (zero-dep fallback) ═══════════════════════"
+# Regression (found by the SLD retro-port review): a jq-style quoted key like
+# `.severity."pii-logging"` must resolve under the node AND python fallbacks too —
+# the quotes are literal to a naive split, so a hyphenated key silently returned
+# empty, which silently DOWNGRADED the pii-logging→fail LGPD elevation on any box
+# without jq. Pin all three parsers on the exact path.
+# shellcheck source=/dev/null
+. "$LIB"
+jq_walk()   { jq -c -r "$2 // empty" "$1" 2>/dev/null; }
+node_walk() { node -e "$_PG_NODE_WALK" "$1" "$2" 2>/dev/null; }
+py_walk()   { python3 -c "$_PG_PY_WALK" "$1" "$2" 2>/dev/null; }
+walk_case() { # walk_case <name> <parser-fn>
+  local nome="$1"; shift
+  printf '{"severity":{"pii-logging":"fail"}}\n' > /tmp/pg-walk.json
+  local got; got="$("$@" /tmp/pg-walk.json '.severity."pii-logging"' 2>/dev/null)"
+  if [ "$got" = "fail" ]; then echo "PASS  $nome"; PASS=$((PASS + 1))
+  else echo "FAIL  $nome — quoted-key lookup returned [$got], expected [fail]"; FAIL=$((FAIL + 1)); fi
+  rm -f /tmp/pg-walk.json
+}
+command -v jq      >/dev/null 2>&1 && walk_case "walker: quoted key resolves (jq)"     jq_walk     || echo "SKIP  jq walker (no jq)"
+command -v node    >/dev/null 2>&1 && walk_case "walker: quoted key resolves (node)"   node_walk   || echo "SKIP  node walker (no node)"
+command -v python3 >/dev/null 2>&1 && walk_case "walker: quoted key resolves (python)" py_walk     || echo "SKIP  python walker (no python3)"
 
 echo "═════════════════════════════════════════════════════════════"
 echo "$PASS passed · $FAIL failed"

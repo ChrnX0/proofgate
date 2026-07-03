@@ -21,7 +21,7 @@ _pg_cfg_file() { printf '%s' "${PROOFGATE_CFG:-proofgate.json}"; }
 # The node/python walkers parse a RESTRICTED jq path grammar: dotted keys plus
 # [N] integer indices (e.g. .commands.typecheck, .smoke[0].url). That is all any
 # guard needs; anything fancier should use jq (and degrade to empty without it).
-_PG_NODE_WALK='const fs=require("fs");try{const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const p=String(process.argv[2]).replace(/^\./,"");let c=d;if(p!==""){for(const seg of p.split(".")){const m=seg.match(/^([^\[]*)(?:\[(\d+)\])?$/);if(!m)process.exit(0);if(m[1]!==""){if(c==null)process.exit(0);c=c[m[1]];}if(m[2]!==undefined){if(c==null)process.exit(0);c=c[Number(m[2])];}}}if(c==null)process.exit(0);process.stdout.write(typeof c==="object"?JSON.stringify(c):String(c));}catch(e){process.exit(0);}'
+_PG_NODE_WALK='const fs=require("fs");try{const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const p=String(process.argv[2]).replace(/^\./,"");let c=d;if(p!==""){for(const seg of p.split(".")){const m=seg.match(/^([^\[]*)(?:\[(\d+)\])?$/);if(!m)process.exit(0);if(m[1]!==""){if(c==null)process.exit(0);c=c[m[1].replace(/^"|"$/g,"")];}if(m[2]!==undefined){if(c==null)process.exit(0);c=c[Number(m[2])];}}}if(c==null)process.exit(0);process.stdout.write(typeof c==="object"?JSON.stringify(c):String(c));}catch(e){process.exit(0);}'
 _PG_PY_WALK='import sys,json,re
 try:
  d=json.load(open(sys.argv[1]));p=sys.argv[2]
@@ -32,6 +32,7 @@ try:
    m=re.match(r"^([^\[]*)(?:\[(\d+)\])?$",seg)
    if not m:sys.exit(0)
    k,i=m.group(1),m.group(2)
+   if k and k[:1]==chr(34) and k[-1:]==chr(34):k=k[1:-1]
    if k!="":
     if c is None:sys.exit(0)
     c=c.get(k) if isinstance(c,dict) else None
