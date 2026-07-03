@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🛡️ ProofGate (Anti-Stupidity xD)
+# 🛡️ Anti-Stupidity xD
 
 ### The acceptance gate that doesn't accept *"I think it works."*
 
