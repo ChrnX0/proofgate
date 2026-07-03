@@ -5,9 +5,11 @@
 # `debugger` / stray `console.log` / fresh TODOs are warnings to justify.
 # Exit: 0 = clean · 1 = FAIL (.only/focused tests) · 2 = WARN.
 set -uo pipefail
+# shellcheck source=/dev/null
+. "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
 BASE="${PROOFGATE_BASE:?}"
 
-ADDED="$(git diff "$BASE"..HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.rb' '*.go' '*.rs' | grep -E '^\+' || true)"
+ADDED="$(git diff "$BASE"..HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.rb' '*.go' '*.rs' "${PG_SELF_EXCLUDE[@]}" | grep -E '^\+' | grep -v 'proofgate-allow' || true)"
 
 FOCUS=$(echo "$ADDED" | grep -Ec '\b(it|test|describe)\.only\(|\bf(describe|it)\(' || true)
 if [ "${FOCUS:-0}" -gt 0 ]; then

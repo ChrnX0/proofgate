@@ -4,19 +4,18 @@
 # Example file configurable: proofgate.json → "envExample" (default .env.example).
 # Exit: 0 = clean/skipped · 2 = WARN.
 set -uo pipefail
+# shellcheck source=/dev/null
+. "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
 BASE="${PROOFGATE_BASE:?}"
-CFG="${PROOFGATE_CFG:-proofgate.json}"
 
-EXAMPLE=".env.example"
-if [ -f "$CFG" ] && command -v jq >/dev/null 2>&1; then
-  CUSTOM="$(jq -r '.envExample // empty' "$CFG" 2>/dev/null)"
-  [ -n "$CUSTOM" ] && EXAMPLE="$CUSTOM"
-fi
+EXAMPLE="$(cfg '.envExample')"; EXAMPLE="${EXAMPLE:-.env.example}"
 [ -f "$EXAMPLE" ] || { echo "✅ env-drift: no $EXAMPLE in repo — guard skipped"; exit 0; }
 
-NEW_VARS=$(git diff "$BASE"..HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.rb' \
-  | grep -E '^\+' \
-  | grep -oE 'process\.env\.[A-Z_][A-Z0-9_]*|os\.environ(\.get)?\(["'"'"'][A-Z_][A-Z0-9_]*|ENV\[["'"'"'][A-Z_][A-Z0-9_]*' \
+# Recognizes: process.env.X · import.meta.env.X (Vite) · Deno.env.get("X") ·
+# os.environ["X"]/.get("X") (Python) · os.Getenv("X") (Go) · ENV['X'] (Ruby).
+NEW_VARS=$(git diff "$BASE"..HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs' '*.py' '*.rb' '*.go' "${PG_SELF_EXCLUDE[@]}" \
+  | grep -E '^\+' | grep -v 'proofgate-allow' \
+  | grep -oE 'process\.env\.[A-Z_][A-Z0-9_]*|import\.meta\.env\.[A-Z_][A-Z0-9_]*|Deno\.env\.get\(["'"'"'][A-Z_][A-Z0-9_]*|os\.environ(\.get)?[\(\[]["'"'"'][A-Z_][A-Z0-9_]*|os\.Getenv\(["'"'"'][A-Z_][A-Z0-9_]*|ENV\[["'"'"'][A-Z_][A-Z0-9_]*' \
   | grep -oE '[A-Z_][A-Z0-9_]{2,}$' | sort -u || true)
 
 MISSING=""

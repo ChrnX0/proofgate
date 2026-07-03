@@ -1,5 +1,5 @@
 name: "Anti-Stupidity"
-description: "Delivery gate for CI: tests, secrets in diff, PII in logs, untested changes, env drift. Fails on unproven work."
+description: "Delivery gate for CI: tests, 17 diff guards (secrets, PII, TLS-off, merge markers, silenced tests/types…), SHA-bound verdict. Fails on unproven work."
 author: "Paulo Eduardo (ChrnX0)"
 branding:
   icon: "shield"
@@ -14,27 +14,61 @@ inputs:
     description: "Treat warnings as failures"
     required: false
     default: "false"
+  smoke:
+    description: "Also run the production smoke checks (proofgate.json → smoke[])"
+    required: false
+    default: "false"
   base:
     description: "Git ref to diff against (default: merge-base with the default branch)"
     required: false
     default: ""
+  report:
+    description: "Path for the markdown report artifact"
+    required: false
+    default: "proofgate-report.md"
+
+outputs:
+  fails:
+    description: "Number of failing checks"
+    value: ${{ steps.gate.outputs.fails }}
+  warns:
+    description: "Number of warnings"
+    value: ${{ steps.gate.outputs.warns }}
+  verdict-path:
+    description: "Path to the machine-readable verdict JSON"
+    value: ${{ steps.gate.outputs.verdict-path }}
 
 runs:
   using: "composite"
   steps:
     - name: Run ProofGate mechanical gate
+      id: gate
       shell: bash
       run: |
         ARGS=""
         [ "${{ inputs.build }}" = "true" ] && ARGS="$ARGS --build"
         [ "${{ inputs.strict }}" = "true" ] && ARGS="$ARGS --strict"
+        [ "${{ inputs.smoke }}" = "true" ] && ARGS="$ARGS --smoke"
         [ -n "${{ inputs.base }}" ] && ARGS="$ARGS --base ${{ inputs.base }}"
         git fetch origin +refs/heads/*:refs/remotes/origin/* --quiet || true
-        bash "${{ github.action_path }}/skills/proofgate/scripts/verify.sh" $ARGS --report proofgate-report.md
+        set +e
+        bash "${{ github.action_path }}/skills/proofgate/scripts/verify.sh" $ARGS --report "${{ inputs.report }}"
+        CODE=$?
+        set -e
+        GD="$(git rev-parse --git-dir)"; V="$GD/proofgate-verdict.json"
+        if [ -f "$V" ] && command -v jq >/dev/null 2>&1; then
+          echo "fails=$(jq -r '.fails' "$V")" >> "$GITHUB_OUTPUT"
+          echo "warns=$(jq -r '.warns' "$V")" >> "$GITHUB_OUTPUT"
+        else
+          echo "fails=$([ "$CODE" = 0 ] && echo 0 || echo 1)" >> "$GITHUB_OUTPUT"
+          echo "warns=0" >> "$GITHUB_OUTPUT"
+        fi
+        echo "verdict-path=$V" >> "$GITHUB_OUTPUT"
+        exit $CODE
     - name: Upload report
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: proofgate-report
-        path: proofgate-report.md
+        path: ${{ inputs.report }}
         if-no-files-found: ignore

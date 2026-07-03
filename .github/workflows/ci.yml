@@ -1,6 +1,7 @@
 name: ci
 # ProofGate gates itself: every guard is proven on BOTH paths (fires on the sin,
-# stays quiet on the clean diff) before anything lands on main.
+# stays quiet on the clean diff), the full engine is exercised end to end, and the
+# hooks are fed synthetic events — all before anything lands on main.
 on:
   push:
     branches: [main]
@@ -8,12 +9,29 @@ on:
 
 jobs:
   self-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS buys us bash 3.2 + BSD grep coverage — the portability floor we
+        # promise. It is billing-free on public repos.
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard + engine + hook acceptance tests
+        run: bash tests/run-tests.sh
+
+  shellcheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Guard acceptance tests (positive + negative paths)
-        run: bash tests/run-tests.sh
-      - name: Shell hygiene (shellcheck)
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+      - name: Shell hygiene (blocking)
         run: |
-          shellcheck -S warning skills/proofgate/scripts/verify.sh \
-            skills/proofgate/scripts/guards.d/*.sh install.sh || true
+          shellcheck -S warning \
+            skills/proofgate/scripts/verify.sh \
+            skills/proofgate/scripts/lib.sh \
+            skills/proofgate/scripts/guards.d/*.sh \
+            hooks/*.sh \
+            install.sh
