@@ -12,10 +12,20 @@ a 20-line script would have caught at the gate.
    - read the diff range from `$PROOFGATE_BASE`,
    - print ONE `✅ / ⚠️ / ❌` line,
    - exit `0` (pass) / `1` (fail, blocks the gate) / `2` (warn, must be justified).
-3. Add BOTH test paths to [`tests/run-tests.sh`](tests/run-tests.sh): the guard
+   - Optionally `source "$PROOFGATE_LIB"` for the zero-dep helpers: `cfg`/`cfg_len`/
+     `cfg_list` (read proofgate.json), and `pg_scan <name> <regex>` (added lines
+     matching the pattern, already excluding the gate's own files and suppressions).
+3. **Two conventions keep the gate from flagging ITS OWN source** when vendored into
+   a consumer repo (guard files literally contain the sin patterns):
+   - end pattern-bearing lines with a `proofgate-allow` comment, and
+   - exclude the gate's files with `"${PG_SELF_EXCLUDE[@]}"` (from the lib) — or use
+     `pg_scan`, which does both for you.
+   Consumers get the same escape hatches: a `proofgate-allow` comment on a line, or a
+   `guard:file:hash` fingerprint in `.proofgateignore`.
+4. Add BOTH test paths to [`tests/run-tests.sh`](tests/run-tests.sh): the guard
    **fires on the sin** and **stays quiet on a clean diff**. A guard that never
    fires is as broken as one that always does — CI enforces this.
-4. In the PR description, tell the scar: what shipped broken the day this
+5. In the PR description, tell the scar: what shipped broken the day this
    became a rule. (Seriously. It's the project's whole aesthetic.)
 
 ## What makes a good guard
