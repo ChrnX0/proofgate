@@ -1,5 +1,5 @@
 name: "Anti-Stupidity"
-description: "Delivery gate for CI: tests, 17 diff guards (secrets, PII, TLS-off, merge markers, silenced tests/types…), SHA-bound verdict. Fails on unproven work."
+description: "Delivery gate for CI: tests + 17 diff guards + SHA-bound verdict. Fails on unproven work."
 author: "Paulo Eduardo (ChrnX0)"
 branding:
   icon: "shield"
