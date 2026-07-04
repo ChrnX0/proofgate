@@ -16,10 +16,15 @@ Justification for each ⚠️ (mandatory — silence is not a justification):
 
 ## VERIFIED (exercised for real)
 
-| Claim | Evidence |
-|---|---|
-| e.g. "POST /api/orders returns 201 in production" | `curl` output / screenshot link / e2e run URL |
-| e.g. "UI renders on the real target" | screenshot reviewed, link |
+> Evidence level: **E0** believed · **E1** static (typecheck/lint) · **E2** automated
+> test · **E3** exercised end-to-end on the real runtime · **E4** observed in
+> production. A runtime claim is DONE only at **E3+**.
+
+| Claim | Level | Evidence |
+|---|---|---|
+| e.g. "POST /api/orders returns 201 in production" | E4 | `curl` output / prod log link |
+| e.g. "the checkout flow works" | E3 | e2e run URL / screenshot reviewed |
+| e.g. "the reducer handles the empty case" | E2 | test name + pass line |
 
 ## NOT TESTED (honest list)
 

@@ -36,6 +36,12 @@ Proof of layer: <stack trace line / log source / repro isolating the layer>
 
 - What changes, and why this kills the CAUSE (not the symptom):
 
+## 6b. Counter-proof
+
+- What would you expect to see if this fix were WRONG (the symptom still firing,
+  a different error, the wrong value)? Did you check that signal is now ABSENT?
+  A fix you only confirmed by its absence of the happy-path error isn't proven.
+
 ## 7. Regression pin
 
 - Test/guard added so this exact failure can never ship silently again:

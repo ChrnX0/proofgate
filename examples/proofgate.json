@@ -1,8 +1,9 @@
 {
-  "$comment": "ProofGate config — every key is optional. Drop this file at your repo root as proofgate.json. Without it, ProofGate auto-detects your stack (pnpm/npm/yarn/bun scripts, Cargo, Go, Python).",
+  "$comment": "ProofGate config — every key is optional. Drop this at your repo root as proofgate.json. Without it, ProofGate auto-detects your stack (pnpm/npm/yarn/bun, Cargo, Go, Python, Gradle/Maven, .NET, Ruby, PHP, Elixir, Deno). Read with jq, node, or python3 — whichever exists (zero hard dependency).",
 
   "commands": {
     "typecheck": "pnpm typecheck",
+    "lint": "pnpm lint",
     "test": "pnpm test",
     "build": "pnpm build"
   },
@@ -12,17 +13,32 @@
       "a": "apps/web/src/lib/db.ts",
       "b": "db/schema.sql",
       "reason": "the embedded dev schema and the production SQL mirror must move together"
-    },
-    {
-      "a": "packages/core/src/api-contract.ts",
-      "b": "apps/mobile/src/lib/api-types.ts",
-      "reason": "server contract and mobile client types drift silently"
     }
   ],
 
   "piiTerms": "password|ssn|cpf|credit.?card|cvv|phone|e-?mail|birth.?date|medical|diagnosis|address",
-
+  "moneyTerms": "price|amount|total|balance|money|currency|cents|salary|payment|invoice|refund|fee|cost",
   "sourceGlobs": "src/|lib/|app/",
+  "envExample": ".env.example",
+  "maxFileKb": 2048,
+  "timeoutSeconds": 900,
 
-  "envExample": ".env.example"
+  "$comment_guards": "Turn a guard off, downgrade/upgrade its severity, or add repo-local guards. Guard names are the file name without the NN- prefix.",
+  "skip": ["sql-concat"],
+  "severity": { "pii-logging": "fail", "float-money": "off" },
+  "guardsDirs": [".proofgate-guards"],
+
+  "$comment_secrets": "Extra escape hatches for the secrets guard: regexes to allow, plus the always-available inline `proofgate-allow` comment and the .proofgateignore fingerprint file.",
+  "secretAllowlist": ["test-token-[0-9]+", "EXAMPLE_KEY_[A-Z]+"],
+
+  "$comment_smoke": "Production smoke run only under --smoke. Each entry is a GET (url + optional status/expect-body-regex) OR a command (cmd, exit 0 = pass). Never put a real credential in url/headers — use a cmd that reads it from the environment.",
+  "smoke": [
+    { "name": "health", "url": "https://your-app.example.com/api/health", "status": 200, "expect": "ok" },
+    { "name": "version-marker", "url": "https://your-app.example.com/version", "status": 200, "expect": "\"build\":\"NEW_SHA\"" },
+    { "name": "authed-flow", "cmd": "bash scripts/smoke-authed.sh" }
+  ],
+
+  "$comment_hooks": "The plugin's push-guard (PreToolUse) refuses `git push` without a fresh passing verdict; set pushGuard:false to disable. stopGuard (opt-in, default off) makes the Stop hook refuse 'done' without one.",
+  "pushGuard": true,
+  "stopGuard": false
 }

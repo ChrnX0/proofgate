@@ -1,0 +1,6 @@
+{
+  "$comment": "ProofGate gates itself. Its 'test suite' is the guard/engine/hook acceptance harness. The dev source teaches the sin patterns, so a few of its own files carry them by nature — the self-exclusion in lib.sh (PG_SELF_EXCLUDE) covers the gate's runtime files; the rest is content.",
+  "commands": {
+    "test": "bash tests/run-tests.sh"
+  }
+}

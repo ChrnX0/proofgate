@@ -4,16 +4,13 @@
 # Source dirs configurable: proofgate.json → "sourceGlobs" (default "src/|lib/|app/").
 # Exit: 0 = clean · 2 = WARN.
 set -uo pipefail
+# shellcheck source=/dev/null
+. "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
 BASE="${PROOFGATE_BASE:?}"
-CFG="${PROOFGATE_CFG:-proofgate.json}"
 
-SRC="src/|lib/|app/"
-if [ -f "$CFG" ] && command -v jq >/dev/null 2>&1; then
-  CUSTOM="$(jq -r '.sourceGlobs // empty' "$CFG" 2>/dev/null)"
-  [ -n "$CUSTOM" ] && SRC="$CUSTOM"
-fi
+SRC="$(cfg '.sourceGlobs')"; SRC="${SRC:-src/|lib/|app/}"
 
-CHANGED="$(git diff --name-only "$BASE"..HEAD)"
+CHANGED="$(git diff --name-only "$BASE"..HEAD | grep -Ev '(guards\.d/|/\.proofgate/|^\.proofgate/|scripts/verify\.sh|scripts/lib\.sh)')"
 SRC_N=$(echo "$CHANGED" | grep -E "($SRC)" | grep -Ev '(\.test\.|\.spec\.|__tests__|_test\.|/tests?/)' | grep -Ec '\.(ts|tsx|js|jsx|py|rb|go|rs|java|kt)$' || true)
 TEST_N=$(echo "$CHANGED" | grep -Ec '(\.test\.|\.spec\.|__tests__|_test\.|/tests?/)' || true)
 

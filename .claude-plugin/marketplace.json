@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "ProofGate — the acceptance gate that doesn't accept 'I think it works.'",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "proofgate",
       "source": "./",
-      "description": "Three-layer delivery gate: mechanical checks with evidence, a judgment checklist, and a self-improvement loop. Born from real production scars in AI-assisted development.",
+      "description": "Four-layer delivery gate: a mechanical gate with a SHA-bound verdict (17 diff guards), a judgment gate with an evidence hierarchy, an adversarial skeptic, and hooks that refuse to push or declare done without proof. Born from real production scars in AI-assisted development.",
       "author": {
         "name": "Paulo Eduardo",
         "url": "https://github.com/ChrnX0"
