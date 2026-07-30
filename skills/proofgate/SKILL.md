@@ -1,6 +1,6 @@
 ---
 name: proofgate
-description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 17 diff guards) that writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
+description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 18 diff guards) that writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
 ---
 
 # ProofGate — acceptance with EVIDENCE, not hope
@@ -36,9 +36,10 @@ bash scripts/verify.sh --report proofgate-report.md # write a markdown artifact
 
 Auto-detects your stack (pnpm/npm/yarn/bun, Cargo, Go, Python, Gradle/Maven, .NET,
 Ruby, PHP, Elixir, Deno) and runs what the machine checks better than judgment:
-typecheck / lint / tests (/ build) actually green; working tree committed; **17
+typecheck / lint / tests (/ build) actually green; working tree committed; **18
 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types,
-money-as-float, hand-built SQL, machine paths, dependency-lockfile drift, …).
+money-as-float, hand-built SQL, machine paths, dependency-lockfile drift,
+un-migrated schema constraints, …).
 Every full run writes a **SHA-bound verdict** to `.git/proofgate-verdict.json`.
 
 **Any ❌ = the delivery is NOT done.** Every ⚠️ demands a written justification —
@@ -61,6 +62,35 @@ never silent dismissal. False positive? `proofgate-allow` on the line, a
 only at E3 or higher.** "It compiles" (E1) and "a unit test passes" (E2) are
 necessary, not sufficient. State the level of your central claim explicitly.
 
+### Diagnosis is a HYPOTHESIS until an artifact names the AGENT
+
+The hierarchy above rates claims about *behavior* ("the screen works"). Claims about
+*cause* ("X is what broke it") need their own rule — and that gap hid a wrong diagnosis
+for **months** in the project this gate was born in. The symptom was real and seen many
+times: a working tree kept reverting to an older state. The cause was fiction — a
+"drift daemon" that was written into two docs and a skill, and that nobody ever went
+looking for. Two commands eventually ended the story: `git reflog` showed **not one**
+`reset`, and `/proc/uptime` showed a container minutes old. The real cause was
+mundane — the sandbox is recycled between turns, so a *new* container comes up with
+the repo at its image state. Nothing was attacking anything.
+
+**Observing an effect is not identifying an agent.** Before you write a cause anywhere
+durable (status, PR, postmortem, known-issues doc), run the loop:
+
+1. **Hypothesis** — the mechanism, in one sentence. *"A process runs `git reset` on the repo."*
+2. **Falsifiable prediction** — if that were true, what MUST exist? *"A `reset` in the
+   reflog; a process in `ps`; an entry in a log, cron or hook."*
+3. **Command** — the one that reveals that mark. Run it.
+4. **Read** — is the mark there? If NOT, the hypothesis is dead. Don't patch it. Replace it.
+
+**The bar INVERTS for external causes.** When blame lands outside your own code — infra,
+platform, "flaky test", a third party, the environment — the standard goes UP, not down.
+No test contradicts an absent culprit, so it is never disproven on its own; it hardens
+into folklore, and future decisions quietly orbit it. Without an artifact naming the
+agent, the honest record is **"effect observed; cause unknown"** plus the command that
+will measure it next time. That is far more useful than an invented culprit, because it
+keeps the question open.
+
 ### Answer in writing (status report or PR body). No proof = open item.
 
 1. **Root cause with evidence.** If this fixes a bug: WHAT is the real cause, WHERE
@@ -68,6 +98,8 @@ necessary, not sufficient. State the level of your central claim explicitly.
    does the failure live (frontend/backend/native/infra)? A try/catch in one layer
    doesn't catch a crash in another. Then the **counter-proof**: what would you
    expect to see if this fix were WRONG — and did you check it's absent?
+   If the cause is EXTERNAL, apply the inverted bar above — naming an absent culprit
+   is the mistake that survived months here.
 2. **VERIFIED ≠ hoped.** List EXPLICITLY (a) what was exercised and at what level,
    and (b) what was NOT + how it will be. If list (a) tops out below E3 for a
    runtime claim, the delivery isn't done — it's a hypothesis.
@@ -99,6 +131,11 @@ necessary, not sufficient. State the level of your central claim explicitly.
 | "The happy path works" | Drive the empty / error / unauthorized / concurrent path too |
 | "Deploy succeeded (READY)" | Smoke the real endpoint for a marker unique to the NEW build |
 | "I'll add the test later" | Later is where regressions ship — pin it now |
+| "It was the infra / the environment / it's just flaky" | Did you observe the AGENT or only the EFFECT? Name the command that would reveal its mark and RUN it (`git reflog` for a reset, `ps`/cron/hooks for a process, `/proc/uptime` for a recycled container, the provider's log for an outage). An absent culprit is never disproven — it becomes folklore. No mark: *"effect observed, cause unknown"* |
+| "The page returned 200 / grep found the string" | A 200 can be your error boundary, and a grep for CONTENT matches the error page too. Prove the ABSENCE of failure (error-boundary markup, error digest, 5xx) across N requests — not the presence of a word |
+| "The build passed, so the page renders" | Server-side render errors (a non-serializable prop, a function crossing a client boundary) pass typecheck AND build, then fail at RUNTIME — sometimes only on *some* requests. Read the new deployment's runtime log |
+| "I only ran a seed / an UPDATE in production, I didn't touch code" | **Direct writes to production have no diff — no guard here can see them.** Bad data breaks rendering without a single line changing. A DATA mutation needs the same proof as a code change: exercise the real flow AFTER the write, and read the runtime log |
+| "The production sweep came back clean" | Did it cover the route you actually CHANGED? A static route list never hits a new or dynamic path, and a clean sweep of 35 untouched screens proves nothing about yours |
 
 ### Banned language (before the evidence exists)
 
@@ -117,13 +154,31 @@ declaring done. Or run `/proofgate:gate` to do the whole ritual at once.
 
 ## Step 4 — learn (the self-improvement loop)
 
-If this gate caught something, the lesson becomes DURABLE knowledge NOW — in ~10 lines:
+If this gate caught something, the lesson becomes DURABLE knowledge NOW — in ~10 lines.
+But *where* you write it decides whether it protects anything:
 
-- a **regression test**, or
-- a **new guard** in `scripts/guards.d/` (drop `NN-name.sh`; one grep, `exit 0/1/2`,
-  a scar comment, and a positive + negative case in `tests/run-tests.sh` — it runs
-  automatically), or
-- a line in your project's known-issues doc.
+| Level | Form | Depends on someone remembering? |
+|---|---|---|
+| 1 | in your head / this session | 100% — gone when the session ends |
+| 2 | prose in a doc (README, known-issues, CLAUDE.md) | they must read it **and** connect it to the moment |
+| 3 | a line in this SKILL (invoked every delivery) | they must invoke and judge |
+| **4** | **a guard or test that FAILS LOUD** | **no** |
+| **5** | **impossible by construction** | **no** |
+
+**Only 4 and 5 stand on their own. Stopping at level 2 is the anti-pattern** — and it is
+not theoretical: the rule about which build a native test flow belonged to was written
+in a project's guidelines, in plain words, and the mistake happened anyway, burning 28
+minutes of CI. Writing a lesson STORES it; only a guard ENFORCES it. So always ask:
+
+- Can this be a **guard** in `scripts/guards.d/`? (`NN-name.sh`: one grep, `exit 0/1/2`,
+  a scar comment, plus a positive AND a negative case in `tests/run-tests.sh` — CI runs
+  it automatically.)
+- Can it be a **regression test** that pins the exact failure?
+- Best of all: can you **derive the value from a single source**, so divergence becomes
+  impossible? (A rule copied into five queries drifted and sat inverted for months; the
+  fix was deriving all five from one constant — level 5, nothing left to remember.)
+
+Track the ones still stuck at level 2: that list *is* your next tooling backlog.
 
 Today's pain is tomorrow's tooling. Re-learning from scratch is forbidden.
 
@@ -137,7 +192,7 @@ observation — not toward "it looks right."
 
 ```
 PROOFGATE — <delivery>
-Mechanical: ✅ typecheck ✅ lint ✅ tests ✅ build ✅ committed ✅ guards (17)
+Mechanical: ✅ typecheck ✅ lint ✅ tests ✅ build ✅ committed ✅ guards (18)
 VERIFIED (level): <central claim @ E3 — flow X driven via curl/e2e/screenshot + evidence>
 NOT TESTED: <what + how it will be>
 Root cause (if fix): <layer + evidence + counter-proof checked>

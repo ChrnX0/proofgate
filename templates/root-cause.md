@@ -24,6 +24,27 @@ Proof of layer: <stack trace line / log source / repro isolating the layer>
 
 - The actual mechanism, one paragraph, with file:line references:
 
+### 3b. The hypothesis, made falsifiable
+
+Observing an EFFECT is not identifying an AGENT. Before this cause goes anywhere
+durable, state what would have to be true — then go look.
+
+| | |
+|---|---|
+| **Hypothesis** (the mechanism, one sentence) | |
+| **Prediction** — if true, what MUST exist? (a log line, a process, a reflog entry, a metric, a stack frame) | |
+| **Command** that reveals it | |
+| **What it actually printed** | |
+
+- [ ] The predicted mark **is present** → the hypothesis survives.
+- [ ] The mark is **absent** → the hypothesis is dead. Replace it; do not patch it.
+
+**If the cause is EXTERNAL** (infra, platform, a third party, "it's flaky"), the bar goes
+UP, not down: nothing contradicts an absent culprit, so it is never disproven and hardens
+into folklore that future decisions orbit. With no artifact naming the agent, write
+**"effect observed; cause unknown"** plus the command that will measure it next time — an
+open question beats a comfortable wrong answer.
+
 ## 4. Evidence
 
 - <error-tracker event link / log excerpt / failing test / query result>
