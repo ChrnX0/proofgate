@@ -136,6 +136,7 @@ keeps the question open.
 | "The build passed, so the page renders" | Server-side render errors (a non-serializable prop, a function crossing a client boundary) pass typecheck AND build, then fail at RUNTIME — sometimes only on *some* requests. Read the new deployment's runtime log |
 | "I only ran a seed / an UPDATE in production, I didn't touch code" | **Direct writes to production have no diff — no guard here can see them.** Bad data breaks rendering without a single line changing. A DATA mutation needs the same proof as a code change: exercise the real flow AFTER the write, and read the runtime log |
 | "The production sweep came back clean" | Did it cover the route you actually CHANGED? A static route list never hits a new or dynamic path, and a clean sweep of 35 untouched screens proves nothing about yours |
+| "The gate passed — every guard came back green" | Green on **which diff**? The base defaults to the merge-base with the default branch, so running the gate AFTER fast-forwarding your work onto it leaves a base that moved *with* the work — the guards then inspect a docs-only diff and each prints its reassuring "nothing touched" line. Read the guard output for lines that CONTRADICT what you just wrote ("mobile app not touched" right after you changed the app), and re-run with `--base <sha before the block>`. The engine warns (`sourceless-diff`), but noticing the contradiction is the real defense |
 
 ### Banned language (before the evidence exists)
 
