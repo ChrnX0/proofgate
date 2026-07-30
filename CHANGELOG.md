@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.2.0 — 2026-07-30
+
+The gate learns to say when it was looking at nothing. Until now a run made
+**after** the work was merged could report every guard green while inspecting a
+diff that no longer contained the work.
+
+### Added
+- **`sourceless-diff`** (engine warning) — fires when the guarded diff contains no
+  source file at all. The trap it closes: `--base` defaults to the merge-base with
+  the default branch, so once a delivery is fast-forwarded onto that branch, the
+  base moves *with* the delivery and the guarded diff collapses to whatever landed
+  afterwards — usually a docs commit. Every diff-based guard then prints its calm
+  "nothing touched" line, which reads exactly like approval. The scar: a run
+  reported *"mobile app not touched in this diff"*, *"no core source in this diff"*
+  and *"0 source / 0 test file(s)"* minutes after that same delivery added two core
+  modules and changed the mobile app — three of the guards that mattered most were
+  silently disabled. Guards cannot detect this from the inside: to a guard, an
+  empty diff is indistinguishable from a clean one. Only the engine knows how big
+  the diff it handed them was. The fix is to re-run with `--base <sha before the
+  block>`.
+- **Excuse-buster row** for *"the gate passed — every guard came back green"*:
+  green on **which diff**? Read the guard output for lines that CONTRADICT what you
+  just wrote.
+
+### Tests
+- Two engine cases (69 total, was 67): a docs-only diff warns; a diff carrying
+  source stays silent.
+
 ## 2.1.0 — 2026-07-30
 
 Judgment gains a rule it never had: how to prove a claim about a **cause**, not

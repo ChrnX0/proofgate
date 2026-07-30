@@ -240,6 +240,16 @@ caso_verify "engine: severity warn demotes a FAIL → exit 0" 0 setup_sevcfg a_t
 caso_verify "engine: --only writes NO verdict"            0 setup_warnsin a_no_verdict --only debug-leftovers
 caso_verify "engine: --dry-run writes NO verdict"         0 setup_clean a_no_verdict --dry-run
 
+# sourceless-diff — the blind-gate trap. When a delivery is fast-forwarded onto the
+# default branch and the gate runs AFTER, the base moves with the work: the guards then
+# inspect a docs-only diff and every one reports "nothing touched", which reads as
+# approval. They cannot detect it from the inside, so the engine warns.
+setup_docsonly()   { echo "# notes" > NOTES.md; }
+a_sourceless()     { grep -q "sourceless-diff" /tmp/pg-cv.out; }
+a_not_sourceless() { ! grep -q "sourceless-diff" /tmp/pg-cv.out; }
+caso_verify "engine: docs-only diff → warns the guards were blind" 0 setup_docsonly a_sourceless
+caso_verify "engine: diff with source → no blind-gate warning"     0 setup_clean a_not_sourceless
+
 echo "══ hooks ═══════════════════════════════════════════════════"
 optin()   { printf '{"pushGuard":true}\n' > proofgate.json; mkdir -p .proofgate && cp "$LIB" .proofgate/lib.sh; }
 optin_stop(){ printf '{"pushGuard":true,"stopGuard":true}\n' > proofgate.json; mkdir -p .proofgate && cp "$LIB" .proofgate/lib.sh; }

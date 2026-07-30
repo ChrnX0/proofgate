@@ -251,6 +251,21 @@ EOF
   done <<EOF
 $DIRS
 EOF
+  # The blind-gate trap. The default base is the merge-base with the default branch — so
+  # once the work is fast-forwarded onto it, the base moves WITH the work and the guarded
+  # diff shrinks to whatever landed after the promotion (usually a docs commit). Every
+  # diff-based guard then prints its reassuring "nothing touched" line: green, and blind,
+  # exactly when the delivery was just published. Guards cannot catch this themselves —
+  # from inside a guard an empty diff is indistinguishable from a clean one. Only the
+  # engine knows how big the diff it handed them was.
+  SRC_GLOBS="$(cfg '.sourceGlobs')"; SRC_GLOBS="${SRC_GLOBS:-src/|lib/|app/}"
+  SRC_IN_DIFF=$(git diff --name-only "$BASE_REF"..HEAD 2>/dev/null \
+    | grep -Ev '(guards\.d/|^\.proofgate/)' \
+    | grep -E "($SRC_GLOBS)" \
+    | grep -Ec '\.(ts|tsx|js|jsx|py|rb|go|rs|java|kt|swift|cs|php)$' || true)
+  if [ "${SRC_IN_DIFF:-0}" -eq 0 ]; then
+    warn "sourceless-diff: the guarded diff has NO source file (docs/config only). If you just promoted this work, the diff guards above are BLIND — their ✅ means 'nothing to look at', not 'nothing wrong'. Re-run with --base <sha before the block>." "sourceless-diff"
+  fi
 else
   warn "empty diff against the default branch (nothing to deliver? or fetch origin first)" "diff-base"
 fi
