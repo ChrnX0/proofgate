@@ -211,6 +211,29 @@ caso "schema-constraint: check in if-not-exists → WARN"  2 95-schema-constrain
 caso "schema-constraint: shipped with ALTER → pass"      0 95-schema-constraint-no-migration.sh plant_ddlok
 caso "schema-constraint: brand-new table → pass"         0 95-schema-constraint-no-migration.sh plant_ddlnew
 
+# ── 96-version-bump-no-release ────────────────────────────────────────────────
+# The sin: a manifest version goes up and nothing in the delivery cuts a release, so
+# "merged" gets reported as "shipped" while the shop window still shows the old number.
+plant_bump()     { printf '{\n  "name": "x",\n  "version": "2.3.0"\n}\n' > package.json; }
+# Release automation owns the cutting — nothing to ask.
+plant_bumpauto() { plant_bump; mkdir -p .changeset; printf 'x\n' > .changeset/config.json; }
+# A tag-triggered release workflow ships with the bump.
+plant_bumpci()   { plant_bump; mkdir -p .github/workflows
+                   printf 'on:\n  push:\n    tags: ["v*"]\njobs:\n  release:\n    steps:\n      - uses: softprops/action-gh-release@v2\n' > .github/workflows/release.yml; }
+# A manifest touched for something OTHER than the version must stay quiet.
+plant_nobump()   { printf '{\n  "name": "x",\n  "version": "2.3.0",\n  "license": "Apache-2.0"\n}\n' > package.json; }
+caso "version-release: bump with no release → WARN"       2 96-version-bump-no-release.sh plant_bump
+caso "version-release: bump + release automation → pass"  0 96-version-bump-no-release.sh plant_bumpauto
+caso "version-release: bump + tag-triggered CI → pass"    0 96-version-bump-no-release.sh plant_bumpci
+# O caso do FALSO POSITIVO, que é a regra de desenho da ferramenta: manifesto mexido
+# por outro motivo (dependência, licença) não pode alarmar em toda entrega. O setup
+# commita a base COM a versão e depois muda só a licença, então a linha da versão não
+# aparece entre as adicionadas.
+plant_nobump()   { printf '{\n  "name": "x",\n  "version": "2.3.0",\n  "license": "MIT"\n}\n' > package.json
+                   git add -A >/dev/null 2>&1; git commit -qm comversao >/dev/null 2>&1
+                   printf '{\n  "name": "x",\n  "version": "2.3.0",\n  "license": "Apache-2.0"\n}\n' > package.json; }
+caso "version-release: manifest edit, no bump → pass"     0 96-version-bump-no-release.sh plant_nobump
+
 echo "══ engine ══════════════════════════════════════════════════"
 a_verdict_valid() { local gd; gd="$(git rev-parse --git-dir)"; [ -f "$gd/proofgate-verdict.json" ] && json_ok "$gd/proofgate-verdict.json"; }
 a_sha_matches()   { local gd sha; gd="$(git rev-parse --git-dir)"; sha="$(sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' "$gd/proofgate-verdict.json" | head -1)"; [ "$sha" = "$(git rev-parse HEAD)" ]; }

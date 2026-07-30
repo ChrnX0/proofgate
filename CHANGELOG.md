@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.3.0 — 2026-07-30
+
+The gate learns the difference between **merged** and **released**.
+
+### Added
+- **`96-version-bump-no-release`** (19th guard, WARN) — a version raised in a manifest
+  (`package.json`, `plugin.json`, `Cargo.toml`, `pyproject.toml`, `build.gradle`,
+  `pubspec.yaml`, …) with nothing in the delivery that cuts a release. The scar, from
+  this project's own 2.2.0: the manifests went to 2.2.0, the CHANGELOG gained its
+  section, the PR merged green, and the delivery was reported as *"merged, public"* —
+  then the owner opened the repository and saw **2.0.0**. Both statements were true and
+  only one mattered: no tag or release had ever been cut. A manifest bump is invisible
+  to everyone who is not reading the diff; the release IS the shop window.
+
+  Stays quiet when the delivery itself handles the release — release automation
+  (changesets, release-please, semantic-release, goreleaser) or a tag-triggered
+  workflow — and when a manifest is edited for anything other than its version, which
+  is the false positive that would otherwise fire on every dependency bump.
+
+- **Excuse-buster row** for *"it's merged / it's on main, so it's shipped"*: merged and
+  released are different events, and a bump feels like the second while being the first.
+
+### Tests
+- Four guard cases (73 total, was 69): fires on the bare bump; silent with release
+  automation; silent with a tag-triggered workflow; silent on a manifest edit that does
+  not touch the version.
+
 ## 2.2.0 — 2026-07-30
 
 The gate learns to say when it was looking at nothing. Until now a run made
