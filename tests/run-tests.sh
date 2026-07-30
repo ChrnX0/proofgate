@@ -199,6 +199,18 @@ plant_sqlok()  { echo 'db.query(sql`SELECT id FROM users`);' > a.ts; }
 caso "sql-concat: concatenated SQL → WARN"       2 90-sql-concat.sh plant_sql
 caso "sql-concat: tagged template → pass"        0 90-sql-concat.sh plant_sqlok
 
+# ── 95-schema-constraint-no-migration ─────────────────────────────────────────
+# The sin: tightening a column inside `create table if not exists` — a no-op on any
+# database that already has the table, so the constraint never reaches production.
+plant_ddl()    { printf 'create table if not exists users (\n  id uuid primary key,\n  sex text check (sex in (\x27M\x27, \x27F\x27))\n);\n' > schema.sql; }
+# Same constraint, but the delivery also ships the ALTER that reaches a live database.
+plant_ddlok()  { plant_ddl; printf 'alter table users add constraint users_sex_valid check (sex in (\x27M\x27, \x27F\x27));\n' >> schema.sql; }
+# A brand-new table carries its own constraints — nothing to migrate.
+plant_ddlnew() { printf 'create table teams (\n  id uuid primary key,\n  name text not null\n);\n' > schema.sql; }
+caso "schema-constraint: check in if-not-exists → WARN"  2 95-schema-constraint-no-migration.sh plant_ddl
+caso "schema-constraint: shipped with ALTER → pass"      0 95-schema-constraint-no-migration.sh plant_ddlok
+caso "schema-constraint: brand-new table → pass"         0 95-schema-constraint-no-migration.sh plant_ddlnew
+
 echo "══ engine ══════════════════════════════════════════════════"
 a_verdict_valid() { local gd; gd="$(git rev-parse --git-dir)"; [ -f "$gd/proofgate-verdict.json" ] && json_ok "$gd/proofgate-verdict.json"; }
 a_sha_matches()   { local gd sha; gd="$(git rev-parse --git-dir)"; sha="$(sed -n 's/.*"sha":"\([0-9a-f]*\)".*/\1/p' "$gd/proofgate-verdict.json" | head -1)"; [ "$sha" = "$(git rev-parse HEAD)" ]; }

@@ -1,5 +1,48 @@
 # Changelog
 
+## 2.1.0 — 2026-07-30
+
+Judgment gains a rule it never had: how to prove a claim about a **cause**, not
+just about behavior. Plus the guard for a constraint that never reaches the
+database it was written to protect.
+
+### Added
+- **"Diagnosis is a HYPOTHESIS until an artifact names the AGENT"** (`SKILL.md`,
+  step 2) — the evidence hierarchy rates claims about *behavior*; nothing rated
+  claims about *cause*. Adds the loop **hypothesis → falsifiable prediction →
+  command → read**, and the rule that the bar **inverts** for external causes
+  (infra, platform, "flaky", third party): no test contradicts an absent culprit,
+  so it is never disproven and hardens into folklore. Without an artifact, the
+  honest record is *"effect observed, cause unknown"* plus the command that will
+  measure it next time. The scar: a "drift daemon" was blamed for months in two
+  docs and a skill; `git reflog` showed not one `reset` and `/proc/uptime` showed
+  a container minutes old — the sandbox was simply being recycled between turns.
+- **`95-schema-constraint-no-migration`** (18th guard, WARN) — a `check` /
+  `unique` / `not null` / FK added inside a `create table if not exists` with no
+  migration in the same diff. On a database that already has the table, the DDL is
+  a no-op: the constraint never runs, while schema-parity and generated-type
+  checks all stay green. Passes when the delivery also ships the `alter table`, and
+  when the table is genuinely new.
+- **Protection levels in step 4** — where a lesson is written decides whether it
+  protects anything: 1 memory · 2 prose · 3 a line in this skill · **4 a guard or
+  test that fails loud** · **5 impossible by construction**. Only 4 and 5 stand on
+  their own; stopping at level 2 is the anti-pattern, with the receipt (a rule
+  written in plain words in a project's guidelines, and the mistake happened anyway).
+- **Five entries in the excuse-buster table**, each from a shipped failure:
+  external-cause blame · `200`-and-a-`grep` as smoke (a 200 can be the error
+  boundary; a content grep matches the error page too) · "build passed so it
+  renders" (server-render errors pass typecheck AND build, and can be
+  intermittent) · **direct writes to production have no diff**, so no guard here can
+  see them — a data mutation needs the same proof as a code change · a clean
+  production sweep that never touched the route you changed.
+
+### Changed
+- Guard count is now **18** across `SKILL.md`, `README.md`, `action.yml` and both
+  plugin manifests.
+- `tests/run-tests.sh`: **61 → 67** cases (the new guard is proven on three paths —
+  it fires on the sin, stays quiet when the migration ships, and stays quiet for a
+  brand-new table).
+
 ## 2.0.0 — 2026-07-03
 
 The gate becomes a system. From a checklist-with-a-script to four layers:
