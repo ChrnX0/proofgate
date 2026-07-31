@@ -1,0 +1,68 @@
+name: release
+
+# Cutting a release is the last mile of shipping, and it is the mile that gets
+# skipped: a manifest bump feels like publishing while being invisible to every
+# user. Guard 96 warns about that gap; this workflow closes it, and does so from
+# a runner — the only place with write access to tags and releases in every
+# environment we ship from.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, without the leading v (e.g. 2.3.0)'
+        required: true
+      target:
+        description: 'Commit to tag. Leave empty to tag the current main.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Refuse a version the manifests do not claim
+        # Only when releasing the tip: backfilling a historical tag legitimately
+        # points at a commit whose manifest is older than main's.
+        if: inputs.target == ''
+        run: |
+          claimed=$(grep -o '"version": *"[^"]*"' .claude-plugin/plugin.json | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+          if [ "$claimed" != "${{ inputs.version }}" ]; then
+            echo "::error::plugin.json says $claimed, you asked to release ${{ inputs.version }}"
+            exit 1
+          fi
+
+      - name: Refuse a version the CHANGELOG never described
+        run: |
+          grep -q "^## ${{ inputs.version }} " CHANGELOG.md || {
+            echo "::error::CHANGELOG.md has no '## ${{ inputs.version }}' section"
+            exit 1
+          }
+
+      - name: Extract this version's CHANGELOG section as the release body
+        run: |
+          awk -v v="## ${{ inputs.version }} " '
+            index($0, v) == 1 { inside = 1; next }
+            inside && /^## / { exit }
+            inside { print }
+          ' CHANGELOG.md > /tmp/body.md
+          test -s /tmp/body.md || { echo "::error::empty release body"; exit 1; }
+          cat /tmp/body.md
+
+      - name: Cut the tag and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "v${{ inputs.version }} already released — nothing to do."
+            exit 0
+          fi
+          args=(--title "ProofGate v${{ inputs.version }}" --notes-file /tmp/body.md)
+          if [ -n "${{ inputs.target }}" ]; then args+=(--target "${{ inputs.target }}"); fi
+          gh release create "v${{ inputs.version }}" "${args[@]}"
