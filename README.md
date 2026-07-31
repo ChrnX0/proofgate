@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/ChrnX0/proofgate/main/install.sh | 
 bash .proofgate/verify.sh
 ```
 
-No config. ProofGate auto-detects your stack (pnpm · npm · yarn · bun · Cargo · Go · Python · Gradle/Maven · .NET · Ruby · PHP · Elixir · Deno) and judges **the diff you're about to ship** with 18 guards:
+No config. ProofGate auto-detects your stack (pnpm · npm · yarn · bun · Cargo · Go · Python · Gradle/Maven · .NET · Ruby · PHP · Elixir · Deno) and judges **the diff you're about to ship** with 19 guards:
 
 ```
 ── ProofGate · mechanical gate ─────────────────────────────
@@ -59,7 +59,7 @@ A **four-layer delivery gate** that sits between *"the code is written"* and *"t
 
 | Layer | What | Who runs it |
 |---|---|---|
-| **1 · Mechanical** | tests · lint · push state · **18 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, …) → a **SHA-bound verdict** | a script — `verify.sh` |
+| **1 · Mechanical** | tests · lint · push state · **19 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, version-bumped-but-never-released, …) → a **SHA-bound verdict** | a script — `verify.sh` |
 | **2 · Judgment** | root cause + counter-proof · an **evidence hierarchy** (believed → static → tested → exercised → in-prod; "done" needs ≥ exercised) · **diagnosis as a falsifiable hypothesis** · brutally honest status | you (or your agent), **in writing** |
 | **3 · Adversarial** | a **default-refute skeptic** tries to break every "it works" claim against the diff | the `gate-skeptic` subagent |
 | **4 · Enforcement** | hooks refuse to `git push` — or (opt-in) to declare *done* — without a fresh passing verdict | `push-guard` / `stop-guard` |
@@ -91,7 +91,7 @@ The payoff is an **Evidence Report** instead of a vibe — with the evidence *le
 
 ```
 PROOFGATE — checkout flow fix
-Mechanical: ✅ typecheck ✅ lint ✅ tests ✅ committed ✅ guards (18)
+Mechanical: ✅ typecheck ✅ lint ✅ tests ✅ committed ✅ guards (19)
 VERIFIED (E4): POST /api/orders returns 201 in prod — curl output attached
 NOT TESTED: Safari < 16 — no device; will verify via BrowserStack by Fri
 Root cause: race in cart mutex — Sentry #4821, repro pinned; counter-proof checked
