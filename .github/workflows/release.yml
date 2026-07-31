@@ -64,5 +64,14 @@ jobs:
             exit 0
           fi
           args=(--title "ProofGate v${{ inputs.version }}" --notes-file /tmp/body.md)
-          if [ -n "${{ inputs.target }}" ]; then args+=(--target "${{ inputs.target }}"); fi
+          if [ -n "${{ inputs.target }}" ]; then
+            # The releases API rejects an abbreviated SHA with a bare
+            # "Release.target_commitish is invalid" — resolve it here, where the
+            # full history is checked out, so a short SHA is a usable input.
+            full=$(git rev-parse "${{ inputs.target }}^{commit}") || {
+              echo "::error::${{ inputs.target }} is not a commit in this repository"
+              exit 1
+            }
+            args+=(--target "$full")
+          fi
           gh release create "v${{ inputs.version }}" "${args[@]}"
