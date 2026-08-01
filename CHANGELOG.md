@@ -1,5 +1,36 @@
 # Changelog
 
+## 2.4.0 — 2026-08-01
+
+A green suite is evidence about the suite, not about the code.
+
+### Added
+- **Excuse-buster row** for *"I wrote the tests and they all passed on the first run"*.
+  A test that has never been red has never proven it can see anything. The remedy is
+  cheap and nobody does it: break the line the test is supposed to protect, and confirm
+  it screams.
+
+  The scar. A repository function filtered attendance records down to the ones strong
+  enough to be trusted — the anti-fraud rule the whole feature rested on. Its test was
+  named for exactly that, seeded a student with only forgeable records, and asserted the
+  result came back `blocked`. Green. Then a mutation run deleted the filter from the SQL
+  entirely — every forgeable record now counted — and the suite stayed green. The fixture
+  had been landing on `blocked` through a *different* cause (the gym had no verified
+  channel at all), so the assertion never exercised the filter once. The fix was one line
+  of fixture: turn the channel on via another student, isolating the only remaining cause.
+  Then the mutation dies.
+
+  Generalized: **an assertion on an outcome that several causes produce tests none of
+  them.** `=== null`, `toThrow()`, an error state, a falsy return — all are outcomes with
+  many roads leading in.
+
+### Not a guard, deliberately
+  The obvious mechanization — flag test files whose assertions are all "absence" shaped —
+  fires on every legitimate leak test (`expect(log).not.toContain(ssn)`), which is some of
+  the most valuable test code there is. CONTRIBUTING puts low false-positive above all,
+  and a guard that cries on good tests is how a gate gets aliased away. This one stays at
+  the judgment layer, where a human reads it and decides.
+
 ## 2.3.0 — 2026-07-30
 
 The gate learns the difference between **merged** and **released**.
