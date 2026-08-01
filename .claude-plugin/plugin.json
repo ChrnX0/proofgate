@@ -1,7 +1,7 @@
 {
   "name": "proofgate",
   "description": "The acceptance gate that doesn't accept 'I think it works.' A four-layer delivery gate for AI-assisted development: mechanical checks (tests, secrets, PII, 18 diff guards) with a SHA-bound verdict, a judgment checklist with an evidence hierarchy, an adversarial skeptic pass, and hooks that refuse to push or declare 'done' without a fresh passing verdict.",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "author": {
     "name": "Paulo Eduardo",
     "url": "https://github.com/ChrnX0"
