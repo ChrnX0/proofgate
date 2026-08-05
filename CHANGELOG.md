@@ -1,5 +1,57 @@
 # Changelog
 
+## 2.5.0 — 2026-08-05
+
+The mutation rule gets a runner — and it fails loud when it does nothing.
+
+### Added
+- **`skills/proofgate/scripts/mutate.mjs`** — mutation as proof of test, runnable.
+  Point it at a source file and a test command, feed it mutations as JSONL, and it
+  reports which ones the suite failed to notice.
+
+  ```sh
+  node skills/proofgate/scripts/mutate.mjs src/pricing.ts -- npx vitest run src/pricing.test.ts < m.jsonl
+  ```
+
+  2.4.0 added this as a judgment-layer rule ("break the line the test is supposed to
+  protect, and confirm it screams") and deliberately left it unmechanized. It stayed
+  skipped, for the reason disciplines always are: doing it by hand is fiddly, and a
+  hand-rolled loop that silently does nothing looks exactly like a hand-rolled loop that
+  found nothing. That happened twice in one session — wrong working directory, no output,
+  read as green.
+
+  So the runner is built to fail loud. Empty stdin is exit **2**, not success. A baseline
+  that is already red is exit **2** — otherwise "killed" might be an unrelated breakage and
+  the whole report is a lie. A `from` string that is not unique in the file is exit **2**,
+  because a near-miss edits the wrong place and reports a confident, meaningless result.
+  Survivors are exit **1** with the list. The file is restored on every path, including
+  SIGINT. The only exit **0** is "every mutation was caught".
+
+  It earned its keep immediately: on the delivery that motivated it, 47 mutations found
+  **6 blind tests** — six rules the suite was named for and did not cover.
+
+### Added — excuse-buster rows
+- **"The comment says it's safe — I wrote it when I wrote the code."** A comment asserting
+  a security property is an E3 claim wearing a comment's clothes. The scar: a comment
+  promising that re-joining a contest "never grants more credit" sat directly above code
+  where re-joining moved the start date — cutting the numerator *and* the denominator.
+  Two players with identical performance; the one who toggled the switch came out champion,
+  and the existing test asserted the buggy behavior as desired. Documenting a safety
+  property backwards is worse than not documenting it: the next reader skips the check
+  exactly where it was needed.
+
+- **"Typecheck / the suite was green."** Green *when*? Evidence has a timestamp. A command
+  that ran before the last file existed says nothing about that file — and the natural order
+  of work (code, then tests, then verify) puts the mid-way run before the thing most likely
+  to be wrong. The mid-way run is a draft. Re-run it fresh as the last thing before claiming.
+
+### Not a guard, deliberately
+  Neither new row mechanizes cleanly. Flagging comments that contain safety words
+  ("never", "cannot", "safe") in a diff without a test change fires on ordinary prose and
+  on every honest caveat; and "is this evidence stale?" is already covered by the SHA-bound
+  verdict for the gate itself, which cannot see an ad-hoc command you ran in a terminal.
+  CONTRIBUTING puts low false-positive above all — these stay at the judgment layer.
+
 ## 2.4.0 — 2026-08-01
 
 A green suite is evidence about the suite, not about the code.

@@ -306,6 +306,72 @@ code=0; ( cd "$tmpf"; printf '%s' "$(ev 'git push origin main')" | bash "$ROOT/h
 if [ "$code" = 0 ]; then echo "PASS  push-guard: fresh+pass → allow (exit 0)"; PASS=$((PASS+1)); else echo "FAIL  push-guard: fresh+pass → expected 0 got $code"; FAIL=$((FAIL+1)); fi
 rm -rf "$tmpf"
 
+echo "══ mutate: mutation as proof of test ════════════════════════"
+# The two cases CONTRIBUTING requires: it must FIRE on the sin (a test that
+# cannot see its own subject) and stay SILENT on the clean case (a test that
+# catches the break). Plus the three loud-failure modes, because a verification
+# tool whose failure looks like success is the exact thing this tool replaces.
+MUT="$ROOT/skills/proofgate/scripts/mutate.mjs"
+mut_fixture() { # mut_fixture <dir> <assertion-body>
+  mkdir -p "$1"
+  cat > "$1/rule.mjs" <<'JS'
+export const allow = (n) => n >= 3 && n <= 10;
+JS
+  cat > "$1/check.mjs" <<JS
+import { allow } from "./rule.mjs";
+$2
+JS
+}
+mut_case() { # mut_case <name> <assertion-body> <mutation-json> <expected-exit>
+  local nome="$1" corpo="$2" mut="$3" esperado="$4" dir code
+  dir="$(mktemp -d)"
+  mut_fixture "$dir" "$corpo"
+  code=0
+  printf '%s\n' "$mut" | ( cd "$dir" && node "$MUT" rule.mjs -- node check.mjs ) >/dev/null 2>&1 || code=$?
+  if [ "$code" = "$esperado" ]; then echo "PASS  $nome"; PASS=$((PASS + 1))
+  else echo "FAIL  $nome — expected exit $esperado got $code"; FAIL=$((FAIL + 1)); fi
+  rm -rf "$dir"
+}
+
+if command -v node >/dev/null 2>&1; then
+  # SIN: the test only ever checks the lower bound, so removing the upper bound
+  # changes nothing it looks at. The mutation SURVIVES → exit 1.
+  mut_case "mutate: blind test → survivor reported (exit 1)" \
+    'if (allow(5) !== true) process.exit(1);' \
+    '{"name":"upper bound removed","from":"n >= 3 && n <= 10","to":"n >= 3"}' 1
+
+  # CLEAN: the test pins both bounds, so the same mutation is caught → exit 0.
+  mut_case "mutate: seeing test → mutation killed (exit 0)" \
+    'if (allow(5) !== true || allow(99) !== false) process.exit(1);' \
+    '{"name":"upper bound removed","from":"n >= 3 && n <= 10","to":"n >= 3"}' 0
+
+  # Silence is never green.
+  mut_case "mutate: empty stdin → refuses (exit 2)" \
+    'if (allow(5) !== true) process.exit(1);' '' 2
+
+  # A non-unique search string would edit the wrong place and lie confidently.
+  mut_case "mutate: ambiguous 'from' → refuses (exit 2)" \
+    'if (allow(5) !== true) process.exit(1);' \
+    '{"name":"ambiguous","from":"n ","to":"x "}' 2
+
+  # Red baseline: "killed" would be the pre-existing breakage, not the mutation.
+  mut_case "mutate: red baseline → refuses (exit 2)" \
+    'process.exit(1);' \
+    '{"name":"upper bound removed","from":"n >= 3 && n <= 10","to":"n >= 3"}' 2
+
+  # The source file must come back, even after a run that reported survivors.
+  dir="$(mktemp -d)"; mut_fixture "$dir" 'if (allow(5) !== true) process.exit(1);'
+  antes="$(cat "$dir/rule.mjs")"
+  printf '%s\n' '{"name":"x","from":"n >= 3 && n <= 10","to":"n >= 3"}' \
+    | ( cd "$dir" && node "$MUT" rule.mjs -- node check.mjs ) >/dev/null 2>&1 || true
+  if [ "$antes" = "$(cat "$dir/rule.mjs")" ]; then
+    echo "PASS  mutate: source restored after the run"; PASS=$((PASS + 1))
+  else echo "FAIL  mutate: source NOT restored — the tool corrupted the file"; FAIL=$((FAIL + 1)); fi
+  rm -rf "$dir"
+else
+  echo "SKIP  mutate (no node)"
+fi
+
 echo "══ config walkers (zero-dep fallback) ═══════════════════════"
 # Regression (found by the SLD retro-port review): a jq-style quoted key like
 # `.severity."pii-logging"` must resolve under the node AND python fallbacks too —

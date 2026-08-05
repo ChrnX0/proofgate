@@ -133,6 +133,21 @@ The half a script can't do. Its spine is the **evidence hierarchy** — where do
 
 **A runtime claim ("fixed", "works") is DONE only at E3+.** On top of that: root cause *and counter-proof*, production path with a marker unique to the NEW build, cross-checked known issues, failed-twice-→-change-approach, honest VERIFIED/NOT-TESTED/PARTIAL status — plus a banned-hedging-language list and an excuse-buster table. Full text in [`SKILL.md`](skills/proofgate/SKILL.md); fill-in templates in [`templates/`](templates/).
 
+## 🧬 `mutate` — the only proof that a test can *see*
+
+A green suite proves the code passes the tests. It does **not** prove the tests would catch the code being wrong. The only proof of that is to break the code on purpose and check the suite screams.
+
+```sh
+node skills/proofgate/scripts/mutate.mjs src/pricing.ts -- npx vitest run src/pricing.test.ts <<'EOF'
+{"name": "discount floor removed", "from": "Math.max(0, total)", "to": "total"}
+{"name": "expiry check inverted",   "from": "now < expiresAt",    "to": "now > expiresAt"}
+EOF
+```
+
+Language-agnostic — it only needs a file to edit and a command to run (`pytest`, `go test`, `cargo test`, anything). It requires a **green baseline**, requires each `from` to occur **exactly once**, restores the file on every exit path, and reports survivors with **exit 1**. Empty input is **exit 2**: a run that mutated nothing must never look like a run where nothing survived.
+
+**A surviving mutation is not a style note — it is a rule your suite claims to cover and does not.** On the delivery that motivated this tool, 47 mutations found 6 blind tests.
+
 ## 🔌 Guards are plugins — and this repo eats its own dog food
 
 Every automated check is a small script in [`guards.d/`](skills/proofgate/scripts/guards.d/). Exit `0` pass · `1` fail · `2` warn. That's the whole API.

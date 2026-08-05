@@ -121,6 +121,26 @@ keeps the question open.
 9. **Brutally honest status** — VERIFIED (with the proof) · NOT TESTED (with the why
    and how) · PARTIAL (what's missing). An inflated status rots trust worse than a bug.
 
+### Mutation — the only proof that a test can see
+
+```sh
+node skills/proofgate/scripts/mutate.mjs <source-file> -- <test command...> < mutations.jsonl
+```
+
+Each stdin line is `{"name": "...", "from": "<literal>", "to": "<literal>"}`. The runner
+requires a **green baseline** first (otherwise "killed" may just be an unrelated breakage),
+requires `from` to occur **exactly once** (a near-miss edits the wrong place and reports a
+confident, meaningless result), restores the file on any exit, and returns **1 with the list
+of survivors**. Empty input is exit **2** — a run that mutated nothing must never be mistaken
+for a run where nothing survived.
+
+Reach for it whenever a suite passes on the first try, and always before shipping a rule that
+someone has an incentive to break (money, ranking, permissions, rate limits). Write the
+mutation as the *bug a hurried person would actually introduce* — delete the filter, flip
+`>` to `>=`, drop the floor, widen the window — not as random noise.
+
+A surviving mutation is not a style note. It is a rule your suite claims to cover and does not.
+
 ### Don't rationalize — the excuse-buster table
 
 | The excuse you're about to make | What it actually requires |
@@ -138,6 +158,8 @@ keeps the question open.
 | "I only ran a seed / an UPDATE in production, I didn't touch code" | **Direct writes to production have no diff — no guard here can see them.** Bad data breaks rendering without a single line changing. A DATA mutation needs the same proof as a code change: exercise the real flow AFTER the write, and read the runtime log |
 | "The production sweep came back clean" | Did it cover the route you actually CHANGED? A static route list never hits a new or dynamic path, and a clean sweep of 35 untouched screens proves nothing about yours |
 | "It's merged / it's on main, so it's shipped" | **Merged and released are different events.** A version bump in a manifest is invisible to everyone who is not reading the diff — the tag and the release entry are the shop window. Before saying published, check they EXIST for the new version (`git ls-remote --tags`, the releases page). If cutting the release is someone else's step, the delivery is PENDING that step, not done. Same shape as "the deploy is READY" and "the build finished": a step that feels terminal and is not |
+| "The comment says it's safe — I wrote it when I wrote the code" | **A comment asserting a security property is an E3 claim wearing a comment's clothes.** "This can never help an attacker", "callers cannot reach this", "restarting never grants more" — each is a measurable statement about behavior, and a sentence is not a measurement. Either a test drives the attacker's path and compares the outcome, or the sentence is a guess formatted as analysis. Documenting it BACKWARDS is worse than leaving it undocumented: the next reader (often you, hours later) skips the check exactly where it was needed. The scar: a comment promising that re-joining a contest "never grants more credit" sat above code where re-joining moved the start date — cutting the numerator AND the denominator. Two players with identical performance; the one who toggled came out champion |
+| "Typecheck / the suite was green" | Green **when**? Evidence has a timestamp. A command that ran before the last file existed says nothing about that file, and the natural order of work — write code, write tests, verify — puts the mid-way run before the thing most likely to be wrong. The mid-way run is a draft, not proof. Re-run it FRESH as the last thing before you claim |
 | "The gate passed — every guard came back green" | Green on **which diff**? The base defaults to the merge-base with the default branch, so running the gate AFTER fast-forwarding your work onto it leaves a base that moved *with* the work — the guards then inspect a docs-only diff and each prints its reassuring "nothing touched" line. Read the guard output for lines that CONTRADICT what you just wrote ("mobile app not touched" right after you changed the app), and re-run with `--base <sha before the block>`. The engine warns (`sourceless-diff`), but noticing the contradiction is the real defense |
 
 ### Banned language (before the evidence exists)
