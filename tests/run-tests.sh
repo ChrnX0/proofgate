@@ -250,6 +250,18 @@ setup_failsin()   { printf 'ok\n%s%s HEAD\n' '<<<' '<<<<' > a.ts; }  # merge-mar
 setup_skipcfg()   { printf '{"commands":{"typecheck":"true","test":"true"},"skip":["debug-leftovers"]}\n' > proofgate.json; echo 'debugger;' > a.ts; }
 setup_sevcfg()    { printf '{"commands":{"typecheck":"true","test":"true"},"severity":{"debug-leftovers":"warn"}}\n' > proofgate.json; echo 'it.only("x",()=>{})' > a.test.ts; }
 
+# --only has to reach a PROJECT guard (config.guardsDirs), not just the engine's
+# own guards.d. Before 2.6.0 it searched one directory, so the guard a maintainer
+# had just written was the one guard --only could not run.
+setup_projguard() {
+  printf '{"commands":{"typecheck":"true","test":"true"},"guardsDirs":["mine"]}\n' > proofgate.json
+  mkdir -p mine
+  printf '#!/usr/bin/env bash\necho "project guard ran"\nexit 0\n' > mine/90-project-only.sh
+  echo 'x' > a.ts
+}
+a_projguard_ran()  { grep -q "project guard ran" /tmp/pg-cv.out; }
+a_names_both_dirs() { grep -q "guards.d" /tmp/pg-cv.out && grep -q "mine" /tmp/pg-cv.out; }
+
 caso_verify "engine: green repo → exit 0 + valid verdict" 0 setup_clean a_verdict_valid
 caso_verify "engine: verdict sha == HEAD"                 0 setup_clean a_sha_matches
 caso_verify "engine: green repo → pass:true"              0 setup_clean a_pass_true
@@ -261,6 +273,8 @@ caso_verify "engine: planted FAIL sin → exit 1"           1 setup_failsin a_tr
 caso_verify "engine: skip config silences a guard"        0 setup_skipcfg a_true
 caso_verify "engine: severity warn demotes a FAIL → exit 0" 0 setup_sevcfg a_true
 caso_verify "engine: --only writes NO verdict"            0 setup_warnsin a_no_verdict --only debug-leftovers
+caso_verify "engine: --only reaches a guardsDirs guard"   0 setup_projguard a_projguard_ran --only project-only
+caso_verify "engine: --only on an unknown name names every dir it searched" 1 setup_projguard a_names_both_dirs --only nope
 caso_verify "engine: --dry-run writes NO verdict"         0 setup_clean a_no_verdict --dry-run
 
 # sourceless-diff — the blind-gate trap. When a delivery is fast-forwarded onto the

@@ -144,17 +144,30 @@ run_named() { # run_named <name> — configured command wins; else auto-detected
 if [ -n "$ONLY" ]; then
   BASE_REF="${BASE_REF:-$(git merge-base "origin/$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || echo main)" HEAD 2>/dev/null || git rev-parse HEAD~1 2>/dev/null)}"
   export PROOFGATE_BASE="$BASE_REF"
-  found=0
-  for guard in "$GUARDS_DIR"/*.sh; do
-    [ -f "$guard" ] || continue
-    gname="$(basename "$guard" .sh | sed -E 's/^[0-9]+-//')"
-    [ "$gname" = "$ONLY" ] || continue
-    found=1
-    OUT="$(with_timeout bash "$guard" 2>&1)"; CODE=$?
-    printf '%s\n' "$OUT"
-    exit "$( [ "$CODE" = 1 ] && echo 1 || echo 0 )"
-  done
-  [ "$found" = 1 ] || { echo "no guard named '$ONLY' (looked in $GUARDS_DIR)" >&2; exit 1; }
+  # --only must look everywhere a full run looks, including the project's own
+  # guardsDirs. Searching only the engine's guards.d made project guards
+  # unreachable in isolation — so the guard a maintainer most wants to iterate on
+  # (the one they just wrote) was the one --only could not run, and confirming it
+  # had even EXECUTED meant digging through the verdict ledger.
+  ONLY_DIRS="$GUARDS_DIR"
+  while IFS= read -r d; do [ -n "$d" ] && [ -d "$d" ] && ONLY_DIRS="$ONLY_DIRS
+$d"; done <<EOF
+$(cfg_list '.guardsDirs' 2>/dev/null)
+EOF
+  while IFS= read -r gdir; do
+    [ -n "$gdir" ] && [ -d "$gdir" ] || continue
+    for guard in "$gdir"/*.sh; do
+      [ -f "$guard" ] || continue
+      gname="$(basename "$guard" .sh | sed -E 's/^[0-9]+-//')"
+      [ "$gname" = "$ONLY" ] || continue
+      OUT="$(with_timeout bash "$guard" 2>&1)"; CODE=$?
+      printf '%s\n' "$OUT"
+      exit "$( [ "$CODE" = 1 ] && echo 1 || echo 0 )"
+    done
+  done <<EOF
+$ONLY_DIRS
+EOF
+  echo "no guard named '$ONLY' (looked in: $(echo "$ONLY_DIRS" | tr '\n' ' '))" >&2; exit 1
 fi
 
 run_named typecheck
