@@ -196,7 +196,7 @@ False positive? Three escape hatches: a `proofgate-allow` comment on the line, a
 }
 ```
 
-Config reads with jq, node, **or** python3 — whichever exists (zero hard dependency). Flags: `--build` · `--strict` · `--smoke` · `--json` · `--only <guard>` · `--dry-run` · `--base <ref>` · `--report <file>`.
+Config reads with jq, node, **or** python3 — whichever exists (zero hard dependency). Flags: `--build` · `--strict` · `--smoke` · `--json` · `--only <guard>` · `--dry-run` · `--base <ref>` · `--report <file>`. `--only` searches the engine's guards **and** your `guardsDirs`, so you can iterate on a guard you just wrote without paying for a full run.
 
 `--base` defaults to the merge-base with your default branch. If you run the gate **after** merging the work into that branch, the base moves with it and the guards end up inspecting a docs-only diff — reporting "nothing touched" for changes you just shipped. ProofGate warns about that (`sourceless-diff`); pass `--base <sha before the work>` to re-run against the real range.
 

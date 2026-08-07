@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.6.0 — 2026-08-07
+
+`--only` can finally run the guard you just wrote.
+
+### Fixed
+- **`--only <guard>` now searches `config.guardsDirs`, not just the engine's own
+  `guards.d`.** A full run walks both; `--only` walked one. The effect was backwards
+  from what anyone would want: the guards that ship with ProofGate — already covered by
+  this repo's own test suite — were the ones you could run in isolation, and the project
+  guard you had just authored was the one you could not.
+
+  The failure was quiet, which is what made it cost time. `--only my-guard` answered
+  `no guard named 'my-guard'`, which reads like "your file is misnamed" and not like
+  "this flag doesn't look there". The real way to confirm a project guard had run at all
+  was to finish a full gate and read its name out of the verdict ledger
+  (`.git/proofgate-verdict.json`) — because a guard that passes usually prints nothing,
+  so absence from the console proves nothing either way.
+
+  Two consequences worth naming, since both are about iteration speed:
+
+  - authoring a guard no longer requires a full typecheck/lint/test cycle per attempt;
+  - the "not found" message now lists **every** directory that was searched, so a real
+    typo and a mislocated file look different.
+
+  A guard that passes silently is still ambiguous on the console. If you write one,
+  consider printing a one-line ✅ on the clean path — the engine records `pass` in the
+  ledger either way, but the person reading the terminal has no other signal.
+
 ## 2.5.0 — 2026-08-05
 
 The mutation rule gets a runner — and it fails loud when it does nothing.
