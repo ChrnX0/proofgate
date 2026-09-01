@@ -16,9 +16,7 @@ set -uo pipefail
 
 BROAD='pkill|killall|kill[[:space:]]+-[0-9A-Za-z]+[[:space:]]+\$\(pgrep|kill[[:space:]]+\$\(pgrep|taskkill[[:space:]]+/IM'  # proofgate-allow
 
-n=0
-while IFS= read -r file; do n=$((n + 1)); done < <(
-  pg_scan broad-process-kill "$BROAD" ':(exclude)*.md')
+n="$(pg_scan broad-process-kill "$BROAD" ':(exclude)*.md' | pg_count)"
 
 if [ "$n" -gt 0 ]; then
   echo "⚠️  broad-process-kill: $n added line(s) kill processes by name pattern. A pattern cannot tell your process from another - including the one you just started. Kill a recorded PID, or cancel through whatever owns the job."

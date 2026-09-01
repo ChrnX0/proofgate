@@ -21,9 +21,7 @@ git grep -qiE 'create policy|enable row level security' -- . ':(exclude)*/.proof
 
 SUPER='-U[[:space:]]*postgres|PGUSER=postgres|psql[[:space:]]+(-[^[:space:]]+[[:space:]]+)*postgres[[:space:]]|user:[[:space:]]*.postgres.|set[[:space:]]+role[[:space:]]+postgres'  # proofgate-allow
 
-n=0
-while IFS= read -r file; do n=$((n + 1)); done < <(
-  pg_scan superuser-verification "$SUPER" '*test*' '*spec*' '*verify*' '*e2e*' '*fixture*' '*harness*')
+n="$(pg_scan superuser-verification "$SUPER" '*test*' '*spec*' '*verify*' '*e2e*' '*fixture*' '*harness*' | pg_count)"
 
 if [ "$n" -gt 0 ]; then
   echo "⚠️  superuser-verification: $n added line(s) let a test/verification path connect to Postgres as a superuser. Superusers bypass RLS, so policies are NOT exercised — the run proves shape, not acceptance. Have the part that imitates the client connect as the client's role."
