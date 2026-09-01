@@ -157,6 +157,15 @@ caso "env-drift: undeclared var (node) → WARN"   2 40-env-drift.sh plant_env
 caso "env-drift: undeclared var (go) → WARN"     2 40-env-drift.sh plant_envgo
 caso "env-drift: declared var → pass"            0 40-env-drift.sh plant_envok
 
+# ── 47-unquoted-globstar ──────────────────────────────────────────────────────
+# The sin: `"test": "tsx --test src/**/*.test.ts"`. The shell eats the glob and,
+# without globstar, reads ** as ONE level — so a test file at any other depth is
+# never executed and the suite still reports success.
+plant_glob()   { printf '{"scripts":{"test":"tsx --test src/**/*.test.ts"}}\n' > package.json; }
+plant_globok() { printf '{"scripts":{"test":"tsx --test \x27src/**/*.test.ts\x27"}}\n' > package.json; }
+caso "unquoted-globstar: bare ** in a script → WARN"  2 47-unquoted-globstar.sh plant_glob
+caso "unquoted-globstar: quoted ** → pass"            0 47-unquoted-globstar.sh plant_globok
+
 # ── 50-coupled-files ──────────────────────────────────────────────────────────
 plant_pair()   { printf '{"coupledFiles":[{"a":"a.txt","b":"b.txt","reason":"t"}]}\n' > proofgate.json; echo x > a.txt; }
 plant_pairok() { printf '{"coupledFiles":[{"a":"a.txt","b":"b.txt","reason":"t"}]}\n' > proofgate.json; echo x > a.txt; echo y > b.txt; }

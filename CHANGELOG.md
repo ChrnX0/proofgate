@@ -29,6 +29,13 @@ gate's own.
   machine and not another. Matches on the migrations DIRECTORY, not the word: a
   script called `verify-migrations.sh` verifies migrations, it is not one, and a
   guard that cannot tell those apart gets switched off by the first person it annoys.
+- **`47-unquoted-globstar` — a `**` glob handed to the shell.**
+  `"test": "tsx --test src/**/*.test.ts"`. The shell expands that before the
+  runner sees it and, without `globstar`, reads `**` as a single directory level.
+  A test file one level shallower was never executed, and the suite reported
+  success for a file it had not opened — a test that does not run looks exactly
+  like a test that passes. Found by counting: a new file was added and the total
+  did not move.
 - **`45-broad-process-kill` — killing by name pattern instead of by PID.** A
   `pkill -f verify.sh` meant to clear a stale run killed the run that had just
   started too: both match the same name. The expensive part was not the lost cycle
@@ -55,7 +62,7 @@ gate's own.
   `...00000000000f` warned because `f'` sits in the data.
 
 All four new guards ship with positive AND negative cases in `tests/run-tests.sh`
-(**96**, up from 81), including the two false positives found by wearing them:
+(**98**, up from 81), including the two false positives found by wearing them:
 `92-superuser-verification` fired on this very changelog's kind of prose — a
 comment explaining why `-U postgres` is wrong — and a guard that flags the warning
 against a sin teaches people to stop writing the warning. It also silently matched
