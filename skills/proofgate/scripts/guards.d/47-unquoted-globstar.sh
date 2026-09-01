@@ -20,7 +20,7 @@ QUOTED="['\\\\]"                                                     # proofgate
 
 tab="$(printf '\t')"; n=0
 while IFS="$tab" read -r file content; do
-  case "$file" in *package.json|*/package.json) ;; *) continue ;; esac
+  case "$file" in *package.json) ;; *) continue ;; esac
   printf '%s' "$content" | grep -Eq -- "$GLOB"   || continue
   printf '%s' "$content" | grep -Eq -- "$QUOTED" && continue   # already quoted for the shell
   pg_ignored "$(pg_fingerprint unquoted-globstar "$file" "$content")" && continue
