@@ -21,7 +21,21 @@ git grep -qiE 'create policy|enable row level security' -- . ':(exclude)*/.proof
 
 SUPER='-U[[:space:]]*postgres|PGUSER=postgres|psql[[:space:]]+(-[^[:space:]]+[[:space:]]+)*postgres[[:space:]]|user:[[:space:]]*.postgres.|set[[:space:]]+role[[:space:]]+postgres'  # proofgate-allow
 
-n="$(pg_scan superuser-verification "$SUPER" '*test*' '*spec*' '*verify*' '*e2e*' '*fixture*' '*harness*' | pg_count)"
+# Prose describing the sin is not the sin. This guard's own explanation of why
+# `-U postgres` is wrong fired it on the first run - and a guard that flags the
+# comment warning against it teaches people to stop writing the comment.
+COMMENT='^[[:space:]]*(#|//|--|\*[[:space:]])'   # proofgate-allow
+
+# `--` is not decoration: $SUPER starts with `-U`, and without it grep reads the
+# pattern as an option and silently matches nothing. The guard passed everything.
+n=0
+tab="$(printf '\t')"
+while IFS="$tab" read -r file content; do
+  printf '%s' "$content" | grep -Eq -- "$SUPER"   || continue
+  printf '%s' "$content" | grep -Eq -- "$COMMENT" && continue
+  pg_ignored "$(pg_fingerprint superuser-verification "$file" "$content")" && continue
+  n=$((n + 1))
+done < <(pg_added_with_file '*test*' '*spec*' '*verify*' '*e2e*' '*fixture*' '*harness*')
 
 if [ "$n" -gt 0 ]; then
   echo "⚠️  superuser-verification: $n added line(s) let a test/verification path connect to Postgres as a superuser. Superusers bypass RLS, so policies are NOT exercised — the run proves shape, not acceptance. Have the part that imitates the client connect as the client's role."

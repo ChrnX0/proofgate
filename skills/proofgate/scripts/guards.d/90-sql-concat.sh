@@ -9,11 +9,20 @@ set -uo pipefail
 # shellcheck source=/dev/null
 . "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
 SQL='SELECT[[:space:]].*[[:space:]]FROM[[:space:]]|INSERT[[:space:]]+INTO[[:space:]]|UPDATE[[:space:]].*[[:space:]]SET[[:space:]]|DELETE[[:space:]]+FROM[[:space:]]'  # proofgate-allow
-CONCAT='["'"'"'`][[:space:]]*\+|\+[[:space:]]*["'"'"'`]|\$\{|%s|%d|f["'"'"']|\.format[[:space:]]*\(|\|\|[[:space:]]*[[:alnum:]_]'  # proofgate-allow
+CONCAT='["'"'"'`][[:space:]]*\+|\+[[:space:]]*["'"'"'`]|\$\{|%s|%d|f["'"'"']|\.format[[:space:]]*\('  # proofgate-allow
+# SQL's concatenation operator, kept apart from the rest for one reason: in a
+# shell script `||` is or, and `psql -c "insert into t ...;" || fail` has exactly
+# the shape of `'abc' || col` - a quote, then the bars. Nothing on the line tells
+# them apart, so the file type does: shell scripts are excluded from this branch
+# alone, and keep every other pattern above.
+PIPE='["'"'"'][[:space:]]*\|\||\|\|[[:space:]]*["'"'"']'   # proofgate-allow
 tab="$(printf '\t')"; n=0
 while IFS="$tab" read -r file content; do
   printf '%s' "$content" | grep -Eiq "$SQL"    || continue       # a SQL verb AND
-  printf '%s' "$content" | grep -Eq  "$CONCAT"  || continue       # a concat/interp on the same line
+  if ! printf '%s' "$content" | grep -Eq "$CONCAT"; then           # a concat/interp on the same line
+    case "$file" in *.sh|*.bash|*.zsh|*.bats) continue ;; esac      # ...or SQL's `||`, but not the shell's
+    printf '%s' "$content" | grep -Eq "$PIPE" || continue
+  fi
   printf '%s' "$content" | grep -Eq  'sql`'     && continue       # tagged template `sql`...`` is safe
   pg_ignored "$(pg_fingerprint sql-concat "$file" "$content")" && continue
   n=$((n + 1))

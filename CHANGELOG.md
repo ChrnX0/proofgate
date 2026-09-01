@@ -34,8 +34,20 @@ gate's own.
   started too: both match the same name. The expensive part was not the lost cycle
   but the output, which looked like a crash rather than a self-inflicted kill.
 
-All four ship with positive AND negative cases in `tests/run-tests.sh` (**89**, up
-from 81).
+### Fixed
+- **`90-sql-concat` no longer warns on the shell's `||`.** `psql -c "insert into t
+  ...;" || fail` has exactly the shape the guard was looking for — a quote, then
+  the bars — and so does SQL's `'abc' || col`. Nothing on the line separates them,
+  so the file type does: shell scripts are excluded from that branch alone and keep
+  every other pattern. Found by the guard warning on a correct line.
+
+All four new guards ship with positive AND negative cases in `tests/run-tests.sh`
+(**92**, up from 81), including the two false positives found by wearing them:
+`92-superuser-verification` fired on this very changelog's kind of prose — a
+comment explaining why `-U postgres` is wrong — and a guard that flags the warning
+against a sin teaches people to stop writing the warning. It also silently matched
+nothing at first: `$SUPER` starts with `-U`, and `grep -E "$pattern"` without `--`
+reads that as an option.
 
 ## 2.6.0 — 2026-08-07
 

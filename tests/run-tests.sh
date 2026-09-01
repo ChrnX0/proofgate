@@ -198,6 +198,12 @@ plant_sql()    { echo 'db.query("SELECT id FROM users WHERE x = " + y);' > a.ts;
 plant_sqlok()  { echo 'db.query(sql`SELECT id FROM users`);' > a.ts; }
 caso "sql-concat: concatenated SQL → WARN"       2 90-sql-concat.sh plant_sql
 caso "sql-concat: tagged template → pass"        0 90-sql-concat.sh plant_sqlok
+# `||` means SQL concatenation only next to a quote. Bare `||` is the shell's and
+# JavaScript's or, and `psql -c "insert into t ..." || fail` used to warn for it.
+plant_sqlpipe()   { printf 'psql -c "insert into t (id) values (1);" || fail "nope"\n' > a.sh; }
+plant_sqlconcat() { printf 'q = "insert into t values (" || name;\n' > a.ts; }
+caso "sql-concat: shell || after a statement → pass" 0 90-sql-concat.sh plant_sqlpipe
+caso "sql-concat: || against a quote → WARN"         2 90-sql-concat.sh plant_sqlconcat
 
 # ── 45-broad-process-kill ─────────────────────────────────────────────────────
 # The sin: stopping a job by name pattern. The pattern cannot tell your process
@@ -217,6 +223,11 @@ plant_super()   { printf 'create policy p on t for insert with check (true);\n' 
 plant_nopolicy() { printf 'psql -U postgres -f queue.sql\n' > verify.sh; }
 caso "superuser-verification: superuser + RLS → WARN"  2 92-superuser-verification.sh plant_super
 caso "superuser-verification: no RLS in repo → skip"   0 92-superuser-verification.sh plant_nopolicy
+# Prose describing the sin is not the sin — including this guard's own comment
+# explaining why the superuser is wrong, which is what fired it the first time.
+plant_supercomment() { printf 'create policy p on t for insert with check (true);\n' > s.sql
+                       printf '# never run this with -U postgres\npsql -f queue.sql\n' > verify.sh; }
+caso "superuser-verification: mentioned in a comment → pass" 0 92-superuser-verification.sh plant_supercomment
 
 # ── 97-migration-edited ───────────────────────────────────────────────────────
 # The sin: editing a step that has already run. The database that ran it keeps
