@@ -9,7 +9,11 @@ set -uo pipefail
 # shellcheck source=/dev/null
 . "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
 SQL='SELECT[[:space:]].*[[:space:]]FROM[[:space:]]|INSERT[[:space:]]+INTO[[:space:]]|UPDATE[[:space:]].*[[:space:]]SET[[:space:]]|DELETE[[:space:]]+FROM[[:space:]]'  # proofgate-allow
-CONCAT='["'"'"'`][[:space:]]*\+|\+[[:space:]]*["'"'"'`]|\$\{|%s|%d|f["'"'"']|\.format[[:space:]]*\('  # proofgate-allow
+CONCAT='["'"'"'`][[:space:]]*\+|\+[[:space:]]*["'"'"'`]|\$\{|%s|%d|(^|[^[:alnum:]_])f["'"'"']|\.format[[:space:]]*\('  # proofgate-allow
+# The f-string branch needs a boundary before the `f`. Without it any word ending
+# in f before a quote matches, and hex is full of them: a line inserting the uuid
+# ...00000000000f warned, because `f'` is in the data.
+
 # SQL's concatenation operator, kept apart from the rest for one reason: in a
 # shell script `||` is or, and `psql -c "insert into t ...;" || fail` has exactly
 # the shape of `'abc' || col` - a quote, then the bars. Nothing on the line tells

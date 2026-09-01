@@ -204,6 +204,12 @@ plant_sqlpipe()   { printf 'psql -c "insert into t (id) values (1);" || fail "no
 plant_sqlconcat() { printf 'q = "insert into t values (" || name;\n' > a.ts; }
 caso "sql-concat: shell || after a statement → pass" 0 90-sql-concat.sh plant_sqlpipe
 caso "sql-concat: || against a quote → WARN"         2 90-sql-concat.sh plant_sqlconcat
+# An f-string needs a boundary before the f. Hex data is full of words ending in
+# one, and `values ('...000f')` is not a Python format string.
+plant_sqlhex()   { printf "psql -c \"insert into t (id) values ('0000000f');\"\n" > a.sh; }
+plant_sqlfstr()  { printf 'cur.execute(f"insert into t values ({x})")\n' > a.py; }
+caso "sql-concat: hex ending in f before a quote → pass" 0 90-sql-concat.sh plant_sqlhex
+caso "sql-concat: real f-string → WARN"                  2 90-sql-concat.sh plant_sqlfstr
 
 # ── 45-broad-process-kill ─────────────────────────────────────────────────────
 # The sin: stopping a job by name pattern. The pattern cannot tell your process
