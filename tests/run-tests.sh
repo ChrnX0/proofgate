@@ -166,6 +166,16 @@ plant_globok() { printf '{"scripts":{"test":"tsx --test \x27src/**/*.test.ts\x27
 caso "unquoted-globstar: bare ** in a script → WARN"  2 47-unquoted-globstar.sh plant_glob
 caso "unquoted-globstar: quoted ** → pass"            0 47-unquoted-globstar.sh plant_globok
 
+# ── 48-pipeline-exit-code ─────────────────────────────────────────────────────
+# The sin: `cmd | tail -3` then `echo $?`. That is tail's status, and tail
+# succeeds at printing three lines of a failure.
+plant_pipeexit()  { printf '#!/bin/bash\nnpm test 2>&1 | tail -3\necho "exit: $?"\n' > a.sh; }
+plant_pipefail()  { printf '#!/bin/bash\nset -euo pipefail\nnpm test 2>&1 | tail -3\necho "exit: $?"\n' > a.sh; }
+plant_pipedirect(){ printf '#!/bin/bash\nnpm test > out.txt 2>&1\necho "exit: $?"\n' > a.sh; }
+caso "pipeline-exit-code: \$? after a formatter pipe → WARN" 2 48-pipeline-exit-code.sh plant_pipeexit
+caso "pipeline-exit-code: pipefail set → pass"              0 48-pipeline-exit-code.sh plant_pipefail
+caso "pipeline-exit-code: status from the command → pass"   0 48-pipeline-exit-code.sh plant_pipedirect
+
 # ── 50-coupled-files ──────────────────────────────────────────────────────────
 plant_pair()   { printf '{"coupledFiles":[{"a":"a.txt","b":"b.txt","reason":"t"}]}\n' > proofgate.json; echo x > a.txt; }
 plant_pairok() { printf '{"coupledFiles":[{"a":"a.txt","b":"b.txt","reason":"t"}]}\n' > proofgate.json; echo x > a.txt; echo y > b.txt; }

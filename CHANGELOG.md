@@ -29,6 +29,12 @@ gate's own.
   machine and not another. Matches on the migrations DIRECTORY, not the word: a
   script called `verify-migrations.sh` verifies migrations, it is not one, and a
   guard that cannot tell those apart gets switched off by the first person it annoys.
+- **`48-pipeline-exit-code` — `$?` read after a pipeline.** `npm run e2e 2>&1 |
+  tail -3` then `echo $?` reports *tail's* status, and tail succeeds at printing
+  three lines of a failure. What made it expensive: the run was checking whether a
+  guard exits non-zero on an empty suite, so "prints the message but exits 0" was
+  the exact defect being fixed — the wrong reading looked like the bug reproducing.
+  Fires only where `pipefail` is absent, since with it the reading is sound.
 - **`47-unquoted-globstar` — a `**` glob handed to the shell.**
   `"test": "tsx --test src/**/*.test.ts"`. The shell expands that before the
   runner sees it and, without `globstar`, reads `**` as a single directory level.
@@ -62,7 +68,7 @@ gate's own.
   `...00000000000f` warned because `f'` sits in the data.
 
 All four new guards ship with positive AND negative cases in `tests/run-tests.sh`
-(**98**, up from 81), including the two false positives found by wearing them:
+(**101**, up from 81), including the two false positives found by wearing them:
 `92-superuser-verification` fired on this very changelog's kind of prose — a
 comment explaining why `-U postgres` is wrong — and a guard that flags the warning
 against a sin teaches people to stop writing the warning. It also silently matched
