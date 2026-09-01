@@ -171,8 +171,14 @@ Every automated check is a small script in [`guards.d/`](skills/proofgate/script
 | `75-machine-paths` | `/home/<you>` / `C:\Users\…` hard-coded | ⚠️ |
 | `85-float-money` | money through a float (`parseFloat`, `.toFixed`) | ⚠️ |
 | `90-sql-concat` | SQL built by string concatenation | ⚠️ |
+| `92-superuser-verification` | a test path reaching Postgres as a superuser, so RLS never runs | ⚠️ |
+| `95-schema-constraint-no-migration` | a constraint tightened inside `create table if not exists` | ⚠️ |
+| `96-version-bump-no-release` | a version raised with no release entry | ⚠️ |
+| `97-migration-edited` | a migration step edited instead of appended | ⚠️ |
+| `45-broad-process-kill` | `pkill` / `killall` — killing by pattern, not by PID | ⚠️ |
+| `99-dead-allow` | a `proofgate-allow` on a comment line, suppressing nothing | ⚠️ |
 
-**Every guard is proven on both paths** — fires on the sin, stays quiet on a clean diff — by [`tests/run-tests.sh`](tests/run-tests.sh) (**61 cases**, engine + hooks included), on every push, on Linux **and** macOS, in [this repo's own CI](https://github.com/ChrnX0/proofgate/actions). The acceptance gate has its own acceptance tests.
+**Every guard is proven on both paths** — fires on the sin, stays quiet on a clean diff — by [`tests/run-tests.sh`](tests/run-tests.sh) (**89 cases**, engine + hooks included), on every push, on Linux **and** macOS, in [this repo's own CI](https://github.com/ChrnX0/proofgate/actions). The acceptance gate has its own acceptance tests.
 
 False positive? Three escape hatches: a `proofgate-allow` comment on the line, a `guard:file:hash` fingerprint in `.proofgateignore`, or `skip`/`severity` in `proofgate.json`. When production burns you in a way a script could have caught: copy [`TEMPLATE.sh.example`](skills/proofgate/scripts/guards.d/TEMPLATE.sh.example), drop a file, done. **Today's pain becomes tomorrow's tooling — permanently.**
 

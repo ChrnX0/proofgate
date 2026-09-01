@@ -136,6 +136,18 @@ plant_dep()    { printf '{"dependencies":{"left-pad":"^1.0.0"}}\n' > package.jso
 plant_deplock(){ printf '{"dependencies":{"left-pad":"^1.0.0"}}\n' > package.json; echo "lockfileVersion: 9" > pnpm-lock.yaml; }
 caso "dependency: manifest w/o lockfile → WARN"  2 35-dependency-change.sh plant_dep
 caso "dependency: manifest + lockfile → pass"    0 35-dependency-change.sh plant_deplock
+# Every JSON line has a quote, so the old shape test warned when only a script
+# was touched — a lockfile that cannot change, demanded on every run.
+plant_depscript() { printf '{"dependencies":{"left-pad":"^1.0.0"},"scripts":{"test":"node t.js"}}\n' > package.json
+                    echo "lockfileVersion: 9" > pnpm-lock.yaml
+                    git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                    printf '{"dependencies":{"left-pad":"^1.0.0"},"scripts":{"test":"node t.js","mutate":"node m.js"}}\n' > package.json; }
+plant_depbump()   { printf '{"dependencies":{"left-pad":"^1.0.0"}}\n' > package.json
+                    echo "lockfileVersion: 9" > pnpm-lock.yaml
+                    git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                    printf '{"dependencies":{"left-pad":"^2.0.0"}}\n' > package.json; }
+caso "dependency: only a script changed → pass"  0 35-dependency-change.sh plant_depscript
+caso "dependency: version bumped, lock stale → WARN" 2 35-dependency-change.sh plant_depbump
 
 # ── 40-env-drift ──────────────────────────────────────────────────────────────
 plant_env()    { echo "OLD_VAR=1" > .env.example; echo 'const u = process.env.BRAND_NEW_VAR;' > cfg.ts; }
@@ -144,6 +156,25 @@ plant_envok()  { echo "GOOD_VAR=1" > .env.example; echo 'const u = process.env.G
 caso "env-drift: undeclared var (node) → WARN"   2 40-env-drift.sh plant_env
 caso "env-drift: undeclared var (go) → WARN"     2 40-env-drift.sh plant_envgo
 caso "env-drift: declared var → pass"            0 40-env-drift.sh plant_envok
+
+# ── 47-unquoted-globstar ──────────────────────────────────────────────────────
+# The sin: `"test": "tsx --test src/**/*.test.ts"`. The shell eats the glob and,
+# without globstar, reads ** as ONE level — so a test file at any other depth is
+# never executed and the suite still reports success.
+plant_glob()   { printf '{"scripts":{"test":"tsx --test src/**/*.test.ts"}}\n' > package.json; }
+plant_globok() { printf '{"scripts":{"test":"tsx --test \x27src/**/*.test.ts\x27"}}\n' > package.json; }
+caso "unquoted-globstar: bare ** in a script → WARN"  2 47-unquoted-globstar.sh plant_glob
+caso "unquoted-globstar: quoted ** → pass"            0 47-unquoted-globstar.sh plant_globok
+
+# ── 48-pipeline-exit-code ─────────────────────────────────────────────────────
+# The sin: `cmd | tail -3` then `echo $?`. That is tail's status, and tail
+# succeeds at printing three lines of a failure.
+plant_pipeexit()  { printf '#!/bin/bash\nnpm test 2>&1 | tail -3\necho "exit: $?"\n' > a.sh; }
+plant_pipefail()  { printf '#!/bin/bash\nset -euo pipefail\nnpm test 2>&1 | tail -3\necho "exit: $?"\n' > a.sh; }
+plant_pipedirect(){ printf '#!/bin/bash\nnpm test > out.txt 2>&1\necho "exit: $?"\n' > a.sh; }
+caso "pipeline-exit-code: \$? after a formatter pipe → WARN" 2 48-pipeline-exit-code.sh plant_pipeexit
+caso "pipeline-exit-code: pipefail set → pass"              0 48-pipeline-exit-code.sh plant_pipefail
+caso "pipeline-exit-code: status from the command → pass"   0 48-pipeline-exit-code.sh plant_pipedirect
 
 # ── 50-coupled-files ──────────────────────────────────────────────────────────
 plant_pair()   { printf '{"coupledFiles":[{"a":"a.txt","b":"b.txt","reason":"t"}]}\n' > proofgate.json; echo x > a.txt; }
@@ -198,6 +229,64 @@ plant_sql()    { echo 'db.query("SELECT id FROM users WHERE x = " + y);' > a.ts;
 plant_sqlok()  { echo 'db.query(sql`SELECT id FROM users`);' > a.ts; }
 caso "sql-concat: concatenated SQL → WARN"       2 90-sql-concat.sh plant_sql
 caso "sql-concat: tagged template → pass"        0 90-sql-concat.sh plant_sqlok
+# `||` means SQL concatenation only next to a quote. Bare `||` is the shell's and
+# JavaScript's or, and `psql -c "insert into t ..." || fail` used to warn for it.
+plant_sqlpipe()   { printf 'psql -c "insert into t (id) values (1);" || fail "nope"\n' > a.sh; }
+plant_sqlconcat() { printf 'q = "insert into t values (" || name;\n' > a.ts; }
+caso "sql-concat: shell || after a statement → pass" 0 90-sql-concat.sh plant_sqlpipe
+caso "sql-concat: || against a quote → WARN"         2 90-sql-concat.sh plant_sqlconcat
+# An f-string needs a boundary before the f. Hex data is full of words ending in
+# one, and `values ('...000f')` is not a Python format string.
+plant_sqlhex()   { printf "psql -c \"insert into t (id) values ('0000000f');\"\n" > a.sh; }
+plant_sqlfstr()  { printf 'cur.execute(f"insert into t values ({x})")\n' > a.py; }
+caso "sql-concat: hex ending in f before a quote → pass" 0 90-sql-concat.sh plant_sqlhex
+caso "sql-concat: real f-string → WARN"                  2 90-sql-concat.sh plant_sqlfstr
+
+# ── 45-broad-process-kill ─────────────────────────────────────────────────────
+# The sin: stopping a job by name pattern. The pattern cannot tell your process
+# from the one you started thirty seconds ago - a `pkill -f verify.sh` killed the
+# verification run it was meant to make room for.
+plant_pkill()   { printf 'pkill -f node\n' > a.sh; }
+plant_killpid() { printf 'kill "$PID"\n' > a.sh; }
+caso "broad-process-kill: pkill by name → WARN"  2 45-broad-process-kill.sh plant_pkill
+caso "broad-process-kill: kill by PID → pass"    0 45-broad-process-kill.sh plant_killpid
+
+# ── 92-superuser-verification ─────────────────────────────────────────────────
+# The sin: a harness that replays the client's writes against Postgres as a
+# superuser. Superusers bypass RLS, so every policy is off: the run proves the
+# columns agree and nothing about whether the server would accept the write.
+plant_super()   { printf 'create policy p on t for insert with check (true);\n' > s.sql
+                  printf 'psql -U postgres -f queue.sql\n' > verify.sh; }
+plant_nopolicy() { printf 'psql -U postgres -f queue.sql\n' > verify.sh; }
+caso "superuser-verification: superuser + RLS → WARN"  2 92-superuser-verification.sh plant_super
+caso "superuser-verification: no RLS in repo → skip"   0 92-superuser-verification.sh plant_nopolicy
+# Prose describing the sin is not the sin — including this guard's own comment
+# explaining why the superuser is wrong, which is what fired it the first time.
+plant_supercomment() { printf 'create policy p on t for insert with check (true);\n' > s.sql
+                       printf '# never run this with -U postgres\npsql -f queue.sql\n' > verify.sh; }
+caso "superuser-verification: mentioned in a comment → pass" 0 92-superuser-verification.sh plant_supercomment
+
+# ── 97-migration-edited ───────────────────────────────────────────────────────
+# The sin: editing a step that has already run. The database that ran it keeps
+# the old shape while a fresh one gets the new, and the two diverge in silence.
+plant_migedit() { mkdir -p migrations; printf 'create table a();\n' > migrations/001.sql
+                  git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                  printf -- '-- reworded\n' >> migrations/001.sql; }
+plant_migadd()  { mkdir -p migrations; printf 'create table a();\n' > migrations/001.sql
+                  git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                  printf 'create table b();\n' > migrations/002.sql; }
+caso "migration-edited: existing step edited → WARN"  2 97-migration-edited.sh plant_migedit
+caso "migration-edited: new step appended → pass"     0 97-migration-edited.sh plant_migadd
+
+# ── 99-dead-allow ─────────────────────────────────────────────────────────────
+# The sin is the gate's own: `proofgate-allow` is matched against the added line
+# ITSELF. On the comment line above the code it excuses it does nothing at all,
+# while reading exactly like a handled finding - a "resolved" sign wired to
+# nothing, which is worse than the warning it appears to answer.
+plant_deadallow() { printf '// proofgate-allow: this covers the line below\nconst x = 1;\n' > a.ts; }
+plant_liveallow() { printf 'const x = 1; // proofgate-allow\n' > a.ts; }
+caso "dead-allow: marker on a comment line → WARN"  2 99-dead-allow.sh plant_deadallow
+caso "dead-allow: marker on the code line → pass"   0 99-dead-allow.sh plant_liveallow
 
 # ── 95-schema-constraint-no-migration ─────────────────────────────────────────
 # The sin: tightening a column inside `create table if not exists` — a no-op on any

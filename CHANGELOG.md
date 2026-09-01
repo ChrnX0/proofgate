@@ -1,5 +1,80 @@
 # Changelog
 
+## 2.7.0 — 2026-09-01
+
+Four guards, each from a failure that actually happened — including one of the
+gate's own.
+
+### Added
+- **`99-dead-allow` — a `proofgate-allow` that suppresses nothing.** The marker is
+  matched against the added line ITSELF. Written on the comment line above the code
+  it means to excuse, it does nothing at all, while reading exactly like a handled
+  finding: the author moves on, the warning keeps counting, and nobody looks because
+  the summary only shows a number. A "resolved" sign wired to nothing is worse than
+  the warning it appears to answer — same family as a green test that exercises no
+  rule. Found by wearing the gate: three markers sat in comments for hours, and the
+  ⚠️ count never moved.
+- **`92-superuser-verification` — a verification path that bypasses row level
+  security.** A schema harness replayed a client's entire write queue against real
+  Postgres and passed: forty-five writes, not one refusal. It connected as
+  `postgres`, and a superuser bypasses RLS outright, so every policy was off. The run
+  proved the columns agreed and nothing whatsoever about whether the server would
+  accept the writes — and the one rule that decided the feature was never executed.
+  A wrong premise then survived a full green bar and got built on top of. Fires only
+  where policies exist, since a repo without RLS has nothing to bypass.
+- **`97-migration-edited` — a step edited instead of appended.** A migration that has
+  already run leaves that database in the shape the old text produced; editing the
+  file changes only what a fresh database gets. The two diverge in silence, every
+  checkout looks fine, and it surfaces months later as a column that exists on one
+  machine and not another. Matches on the migrations DIRECTORY, not the word: a
+  script called `verify-migrations.sh` verifies migrations, it is not one, and a
+  guard that cannot tell those apart gets switched off by the first person it annoys.
+- **`48-pipeline-exit-code` — `$?` read after a pipeline.** `npm run e2e 2>&1 |
+  tail -3` then `echo $?` reports *tail's* status, and tail succeeds at printing
+  three lines of a failure. What made it expensive: the run was checking whether a
+  guard exits non-zero on an empty suite, so "prints the message but exits 0" was
+  the exact defect being fixed — the wrong reading looked like the bug reproducing.
+  Fires only where `pipefail` is absent, since with it the reading is sound.
+- **`47-unquoted-globstar` — a `**` glob handed to the shell.**
+  `"test": "tsx --test src/**/*.test.ts"`. The shell expands that before the
+  runner sees it and, without `globstar`, reads `**` as a single directory level.
+  A test file one level shallower was never executed, and the suite reported
+  success for a file it had not opened — a test that does not run looks exactly
+  like a test that passes. Found by counting: a new file was added and the total
+  did not move.
+- **`45-broad-process-kill` — killing by name pattern instead of by PID.** A
+  `pkill -f verify.sh` meant to clear a stale run killed the run that had just
+  started too: both match the same name. The expensive part was not the lost cycle
+  but the output, which looked like a crash rather than a self-inflicted kill.
+
+### Fixed
+- **`90-sql-concat` no longer warns on the shell's `||`.** `psql -c "insert into t
+  ...;" || fail` has exactly the shape the guard was looking for — a quote, then
+  the bars — and so does SQL's `'abc' || col`. Nothing on the line separates them,
+  so the file type does: shell scripts are excluded from that branch alone and keep
+  every other pattern. Found by the guard warning on a correct line.
+- **`35-dependency-change` compares the dependency blocks instead of guessing at
+  line shape.** It asked whether an added line looked dependency-shaped — a quote,
+  a caret, a tilde — and in JSON every line does. Renaming or adding a `scripts`
+  entry demanded a lockfile that could not possibly change, on every run, for
+  weeks. A warning that is wrong every time is worse than no warning: it teaches
+  people to skip the ones that are right. Now the manifest's dependency,
+  devDependency, peer, optional, override, resolution and `require` blocks are
+  read at both revisions and compared; equal blocks end it. Falls back to the old
+  heuristic where no JSON parser exists, rather than guessing.
+- **`90-sql-concat` no longer reads hex as a Python f-string.** The branch matched
+  `f` followed by a quote with no boundary before it, so any word ending in `f`
+  next to a quote counted — and hex is full of them. A line inserting the uuid
+  `...00000000000f` warned because `f'` sits in the data.
+
+All four new guards ship with positive AND negative cases in `tests/run-tests.sh`
+(**101**, up from 81), including the two false positives found by wearing them:
+`92-superuser-verification` fired on this very changelog's kind of prose — a
+comment explaining why `-U postgres` is wrong — and a guard that flags the warning
+against a sin teaches people to stop writing the warning. It also silently matched
+nothing at first: `$SUPER` starts with `-U`, and `grep -E "$pattern"` without `--`
+reads that as an option.
+
 ## 2.6.0 — 2026-08-07
 
 `--only` can finally run the guard you just wrote.
