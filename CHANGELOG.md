@@ -40,13 +40,22 @@ gate's own.
   the bars — and so does SQL's `'abc' || col`. Nothing on the line separates them,
   so the file type does: shell scripts are excluded from that branch alone and keep
   every other pattern. Found by the guard warning on a correct line.
+- **`35-dependency-change` compares the dependency blocks instead of guessing at
+  line shape.** It asked whether an added line looked dependency-shaped — a quote,
+  a caret, a tilde — and in JSON every line does. Renaming or adding a `scripts`
+  entry demanded a lockfile that could not possibly change, on every run, for
+  weeks. A warning that is wrong every time is worse than no warning: it teaches
+  people to skip the ones that are right. Now the manifest's dependency,
+  devDependency, peer, optional, override, resolution and `require` blocks are
+  read at both revisions and compared; equal blocks end it. Falls back to the old
+  heuristic where no JSON parser exists, rather than guessing.
 - **`90-sql-concat` no longer reads hex as a Python f-string.** The branch matched
   `f` followed by a quote with no boundary before it, so any word ending in `f`
   next to a quote counted — and hex is full of them. A line inserting the uuid
   `...00000000000f` warned because `f'` sits in the data.
 
 All four new guards ship with positive AND negative cases in `tests/run-tests.sh`
-(**94**, up from 81), including the two false positives found by wearing them:
+(**96**, up from 81), including the two false positives found by wearing them:
 `92-superuser-verification` fired on this very changelog's kind of prose — a
 comment explaining why `-U postgres` is wrong — and a guard that flags the warning
 against a sin teaches people to stop writing the warning. It also silently matched

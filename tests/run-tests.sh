@@ -136,6 +136,18 @@ plant_dep()    { printf '{"dependencies":{"left-pad":"^1.0.0"}}\n' > package.jso
 plant_deplock(){ printf '{"dependencies":{"left-pad":"^1.0.0"}}\n' > package.json; echo "lockfileVersion: 9" > pnpm-lock.yaml; }
 caso "dependency: manifest w/o lockfile → WARN"  2 35-dependency-change.sh plant_dep
 caso "dependency: manifest + lockfile → pass"    0 35-dependency-change.sh plant_deplock
+# Every JSON line has a quote, so the old shape test warned when only a script
+# was touched — a lockfile that cannot change, demanded on every run.
+plant_depscript() { printf '{"dependencies":{"left-pad":"^1.0.0"},"scripts":{"test":"node t.js"}}\n' > package.json
+                    echo "lockfileVersion: 9" > pnpm-lock.yaml
+                    git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                    printf '{"dependencies":{"left-pad":"^1.0.0"},"scripts":{"test":"node t.js","mutate":"node m.js"}}\n' > package.json; }
+plant_depbump()   { printf '{"dependencies":{"left-pad":"^1.0.0"}}\n' > package.json
+                    echo "lockfileVersion: 9" > pnpm-lock.yaml
+                    git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                    printf '{"dependencies":{"left-pad":"^2.0.0"}}\n' > package.json; }
+caso "dependency: only a script changed → pass"  0 35-dependency-change.sh plant_depscript
+caso "dependency: version bumped, lock stale → WARN" 2 35-dependency-change.sh plant_depbump
 
 # ── 40-env-drift ──────────────────────────────────────────────────────────────
 plant_env()    { echo "OLD_VAR=1" > .env.example; echo 'const u = process.env.BRAND_NEW_VAR;' > cfg.ts; }
