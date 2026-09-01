@@ -199,6 +199,47 @@ plant_sqlok()  { echo 'db.query(sql`SELECT id FROM users`);' > a.ts; }
 caso "sql-concat: concatenated SQL → WARN"       2 90-sql-concat.sh plant_sql
 caso "sql-concat: tagged template → pass"        0 90-sql-concat.sh plant_sqlok
 
+# ── 45-broad-process-kill ─────────────────────────────────────────────────────
+# The sin: stopping a job by name pattern. The pattern cannot tell your process
+# from the one you started thirty seconds ago - a `pkill -f verify.sh` killed the
+# verification run it was meant to make room for.
+plant_pkill()   { printf 'pkill -f node\n' > a.sh; }
+plant_killpid() { printf 'kill "$PID"\n' > a.sh; }
+caso "broad-process-kill: pkill by name → WARN"  2 45-broad-process-kill.sh plant_pkill
+caso "broad-process-kill: kill by PID → pass"    0 45-broad-process-kill.sh plant_killpid
+
+# ── 92-superuser-verification ─────────────────────────────────────────────────
+# The sin: a harness that replays the client's writes against Postgres as a
+# superuser. Superusers bypass RLS, so every policy is off: the run proves the
+# columns agree and nothing about whether the server would accept the write.
+plant_super()   { printf 'create policy p on t for insert with check (true);\n' > s.sql
+                  printf 'psql -U postgres -f queue.sql\n' > verify.sh; }
+plant_nopolicy() { printf 'psql -U postgres -f queue.sql\n' > verify.sh; }
+caso "superuser-verification: superuser + RLS → WARN"  2 92-superuser-verification.sh plant_super
+caso "superuser-verification: no RLS in repo → skip"   0 92-superuser-verification.sh plant_nopolicy
+
+# ── 97-migration-edited ───────────────────────────────────────────────────────
+# The sin: editing a step that has already run. The database that ran it keeps
+# the old shape while a fresh one gets the new, and the two diverge in silence.
+plant_migedit() { mkdir -p migrations; printf 'create table a();\n' > migrations/001.sql
+                  git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                  printf -- '-- reworded\n' >> migrations/001.sql; }
+plant_migadd()  { mkdir -p migrations; printf 'create table a();\n' > migrations/001.sql
+                  git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                  printf 'create table b();\n' > migrations/002.sql; }
+caso "migration-edited: existing step edited → WARN"  2 97-migration-edited.sh plant_migedit
+caso "migration-edited: new step appended → pass"     0 97-migration-edited.sh plant_migadd
+
+# ── 99-dead-allow ─────────────────────────────────────────────────────────────
+# The sin is the gate's own: `proofgate-allow` is matched against the added line
+# ITSELF. On the comment line above the code it excuses it does nothing at all,
+# while reading exactly like a handled finding - a "resolved" sign wired to
+# nothing, which is worse than the warning it appears to answer.
+plant_deadallow() { printf '// proofgate-allow: this covers the line below\nconst x = 1;\n' > a.ts; }
+plant_liveallow() { printf 'const x = 1; // proofgate-allow\n' > a.ts; }
+caso "dead-allow: marker on a comment line → WARN"  2 99-dead-allow.sh plant_deadallow
+caso "dead-allow: marker on the code line → pass"   0 99-dead-allow.sh plant_liveallow
+
 # ── 95-schema-constraint-no-migration ─────────────────────────────────────────
 # The sin: tightening a column inside `create table if not exists` — a no-op on any
 # database that already has the table, so the constraint never reaches production.

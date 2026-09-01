@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.7.0 — 2026-09-01
+
+Four guards, each from a failure that actually happened — including one of the
+gate's own.
+
+### Added
+- **`99-dead-allow` — a `proofgate-allow` that suppresses nothing.** The marker is
+  matched against the added line ITSELF. Written on the comment line above the code
+  it means to excuse, it does nothing at all, while reading exactly like a handled
+  finding: the author moves on, the warning keeps counting, and nobody looks because
+  the summary only shows a number. A "resolved" sign wired to nothing is worse than
+  the warning it appears to answer — same family as a green test that exercises no
+  rule. Found by wearing the gate: three markers sat in comments for hours, and the
+  ⚠️ count never moved.
+- **`92-superuser-verification` — a verification path that bypasses row level
+  security.** A schema harness replayed a client's entire write queue against real
+  Postgres and passed: forty-five writes, not one refusal. It connected as
+  `postgres`, and a superuser bypasses RLS outright, so every policy was off. The run
+  proved the columns agreed and nothing whatsoever about whether the server would
+  accept the writes — and the one rule that decided the feature was never executed.
+  A wrong premise then survived a full green bar and got built on top of. Fires only
+  where policies exist, since a repo without RLS has nothing to bypass.
+- **`97-migration-edited` — a step edited instead of appended.** A migration that has
+  already run leaves that database in the shape the old text produced; editing the
+  file changes only what a fresh database gets. The two diverge in silence, every
+  checkout looks fine, and it surfaces months later as a column that exists on one
+  machine and not another. Matches on the migrations DIRECTORY, not the word: a
+  script called `verify-migrations.sh` verifies migrations, it is not one, and a
+  guard that cannot tell those apart gets switched off by the first person it annoys.
+- **`45-broad-process-kill` — killing by name pattern instead of by PID.** A
+  `pkill -f verify.sh` meant to clear a stale run killed the run that had just
+  started too: both match the same name. The expensive part was not the lost cycle
+  but the output, which looked like a crash rather than a self-inflicted kill.
+
+All four ship with positive AND negative cases in `tests/run-tests.sh` (**89**, up
+from 81).
+
 ## 2.6.0 — 2026-08-07
 
 `--only` can finally run the guard you just wrote.
