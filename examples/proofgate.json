@@ -5,7 +5,9 @@
     "typecheck": "pnpm typecheck",
     "lint": "pnpm lint",
     "test": "pnpm test",
-    "build": "pnpm build"
+    "build": "pnpm build",
+    "$comment_e2e": "e2e is not run by the gate — its PRESENCE is what tells ProofGate that E3 (the real flow, driven on a real runtime) is producible on this machine. Without it, and without smoke[], the gate reports max_achievable_level E2 rather than pretending E3 was merely skipped.",
+    "e2e": "pnpm e2e"
   },
 
   "coupledFiles": [
@@ -19,6 +21,16 @@
   "piiTerms": "password|ssn|cpf|credit.?card|cvv|phone|e-?mail|birth.?date|medical|diagnosis|address",
   "moneyTerms": "price|amount|total|balance|money|currency|cents|salary|payment|invoice|refund|fee|cost",
   "sourceGlobs": "src/|lib/|app/",
+
+  "$comment_impact": "Blast radius (impact.sh). sensitiveGlobs/sensitiveTerms decide which diffs are L3 — the class that demands an adversarial pass. Paths are the primary signal; terms are matched word-bounded on ADDED non-test lines and need two DISTINCT hits, so one `bearer` in a comment never escalates a typo fix. backendCmd is the LSP seam: a command that reads changed paths on stdin and prints S<TAB>file<TAB>symbol<TAB>kind<TAB>line and C<TAB>symbol<TAB>file<TAB>line — with it, navigation_confidence is `high` instead of `low`.",
+  "sensitiveGlobs": "(^|/)(auth|oauth|session|permission|acl|rbac|billing|payment|checkout|crypto|tls|ssl|cert|secret|migration)s?(/|[._-])",
+  "sensitiveTerms": "\\b(is_admin|isAdmin|bearer|jwt|refund|charge|amount_cents|private key|rejectUnauthorized|verify=False|ALTER TABLE|DROP TABLE|GRANT )",
+  "impact": {
+    "backendCmd": "",
+    "maxSymbols": 100,
+    "maxCallers": 500
+  },
+
   "envExample": ".env.example",
   "maxFileKb": 2048,
   "timeoutSeconds": 900,
@@ -37,6 +49,36 @@
     { "name": "version-marker", "url": "https://your-app.example.com/version", "status": 200, "expect": "\"build\":\"NEW_SHA\"" },
     { "name": "authed-flow", "cmd": "bash scripts/smoke-authed.sh" }
   ],
+
+  "$comment_proof": "requireProof (opt-in, default false) makes the push-guard and stop-guard wait for EVIDENCE, not just a green mechanical gate: the claims ledger must carry a central claim at the level the blast radius demands. Leave it off until the team is recording claims — a gate that blocks on something nobody is producing yet gets bypassed, and bypass culture is worse than no gate.",
+  "requireProof": false,
+
+  "$comment_editguard": "editGuard (opt-in, default false) is the most intrusive rule here: with an OPEN bugfix hypothesis and no failing test recorded for it, editing a non-test source file is blocked. It exists because the counter-proof has to come FIRST, and 'first' is exactly what a prompt cannot enforce — by the time you are editing, the intention to write the test afterwards is completely sincere. hypothesis.strikeThreshold is how many refuted explanations a symptom may survive before the next hypothesis on it is escalated and the gate demands an adversarial pass.",
+  "editGuard": false,
+  "hypothesis": {
+    "branchPattern": "(^|/)(fix|bugfix|hotfix|patch)",
+    "strikeThreshold": 2
+  },
+
+  "$comment_memory": "Project memory (.proofgate/memory.jsonl, committed). Every fact is ANCHORED to a file plus the blob hash it had when recorded, and staleness is DERIVED at read time — never stored — so there is no field to keep in sync and none an agent can flip. Decisions hold until revoked; inferences expire after ttlDiffs commits touch the anchored file; incidents never expire. agentDecisionsExpire makes an agent's own 'decision' expire like the inference it really is, so a guess cannot become permanent policy. liveGuards runs the diff guards on a file the moment it is edited (PostToolUse) instead of only at the gate — a pasted credential caught seconds later is an undo; caught at the gate it is a rotation.",
+  "memory": {
+    "ttlDiffs": 20,
+    "agentDecisionsExpire": true
+  },
+  "liveGuards": false,
+
+  "$comment_experiment": "experiment.sh runs a hypothesis in its own git worktree so nothing leaks between attempts — link names the dependency directories worth symlinking in rather than reinstalling per experiment.",
+  "experiment": {
+    "link": ["node_modules", ".venv", "target", "vendor"],
+    "timeoutSeconds": 900
+  },
+
+  "$comment_skeptic": "requireSkeptic turns 99-skeptic-required from a WARN into a FAIL: an L3 change (auth, money, migrations, crypto, permissions) cannot be called done without a recorded adversarial pass for the CURRENT commit. Leave it off until the team runs the panel — a hard block on a step nobody has wired up is how a gate gets bypassed wholesale. calibration:false stops recording which guards fire and which get suppressed; the report it feeds (verify.sh --calibration) never changes configuration on its own.",
+  "requireSkeptic": false,
+  "calibration": true,
+
+  "$comment_audit": "audit (opt-in, off) records a CHRONOLOGY of Bash commands — not evidence. A PostToolUse hook is not handed a reliable exit code, so entries store exit:null; a log that pretended otherwise would look like evidence while being unable to tell a passing command from a failing one. Its real job is that the edit-guard can be walked around by editing through Bash and .git/ is writable: neither is preventable, both leave a trace here. Off by default because it fires on every Bash call and command lines are a likely place for a credential to sit.",
+  "audit": false,
 
   "$comment_hooks": "The plugin's push-guard (PreToolUse) refuses `git push` without a fresh passing verdict; set pushGuard:false to disable. stopGuard (opt-in, default off) makes the Stop hook refuse 'done' without one.",
   "pushGuard": true,

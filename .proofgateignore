@@ -1,0 +1,10 @@
+# ProofGate's own suppression file: one fingerprint per line (guard:file:hash-of-the-line).
+# Use it only where an inline `proofgate-allow` comment is impossible.
+#
+# examples/proofgate.json is the annotated CONFIG REFERENCE: its sensitiveTerms value
+# lists the strings impact.sh looks for, and two of them (verify=False,
+# rejectUnauthorized) are literally what the tls-off guard hunts. JSON has no comment
+# syntax, so the inline marker is unavailable — this is exactly the case the fingerprint
+# mechanism exists for. Excluding examples/ wholesale was the alternative and it is worse:
+# PG_SELF_EXCLUDE ships to consumer repos, where an examples/ directory holds real code.
+tls-off:examples/proofgate.json:363e9d6d3792

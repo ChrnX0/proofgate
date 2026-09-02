@@ -4,6 +4,16 @@
 > Rule: every claim needs a command that ran, a link, or a number.
 > An empty VERIFIED section means the delivery does not exist yet.
 
+## Status block (generated — do not retype)
+
+```
+<paste the output of `claim.sh render` verbatim>
+```
+
+That block is assembled from the verdict, the blast radius and the claims ledger. If it
+says `VERIFIED: NOTHING`, record the claims first — `claim.sh add --run "<cmd>"` — rather
+than describing the work in prose here. Prose is E0.
+
 ## Mechanical gate
 
 ```
@@ -16,9 +26,11 @@ Justification for each ⚠️ (mandatory — silence is not a justification):
 
 ## VERIFIED (exercised for real)
 
-> Evidence level: **E0** believed · **E1** static (typecheck/lint) · **E2** automated
-> test · **E3** exercised end-to-end on the real runtime · **E4** observed in
-> production. A runtime claim is DONE only at **E3+**.
+> Evidence levels are defined once, in `skills/proofgate/SKILL.md` § the evidence
+> hierarchy. Short form: **E0** believed · **E1** static · **E2** automated test ·
+> **E3** exercised end-to-end on the real runtime · **E4** observed in production.
+> A runtime claim is DONE only at **E3+**, and the level comes from `claim.sh`, which
+> ran the command — not from this table being filled in optimistically.
 
 | Claim | Level | Evidence |
 |---|---|---|

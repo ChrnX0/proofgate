@@ -1,5 +1,5 @@
 name: "Anti-Stupidity"
-description: "Delivery gate for CI: tests + 18 diff guards + SHA-bound verdict. Fails on unproven work."
+description: "Delivery gate for CI: tests, 23 diff guards, blast radius, SHA-bound verdict, and sealed-proof verification. Fails on unproven work."
 author: "Paulo Eduardo (ChrnX0)"
 branding:
   icon: "shield"
@@ -26,8 +26,15 @@ inputs:
     description: "Path for the markdown report artifact"
     required: false
     default: "proofgate-report.md"
+  require-proof-note:
+    description: "Fail the job when the head commit carries no sealed proof note (refs/notes/proofgate)"
+    required: false
+    default: "false"
 
 outputs:
+  proof:
+    description: "verified | tampered | missing — the state of the sealed evidence on the head commit"
+    value: ${{ steps.proof.outputs.proof }}
   fails:
     description: "Number of failing checks"
     value: ${{ steps.gate.outputs.fails }}
@@ -65,6 +72,37 @@ runs:
         fi
         echo "verdict-path=$V" >> "$GITHUB_OUTPUT"
         exit $CODE
+    # The sealed evidence, checked here rather than trusted. On a pull_request event the
+    # checked-out commit is the synthetic MERGE commit, and the note is attached to the
+    # branch head — verifying the wrong sha would report `missing` for every PR and teach
+    # everyone to ignore this step.
+    - name: Verify the sealed proof note
+      id: proof
+      if: always()
+      shell: bash
+      run: |
+        git fetch origin "refs/notes/proofgate:refs/notes/proofgate" --quiet 2>/dev/null || true
+        SHA="${{ github.event.pull_request.head.sha }}"
+        [ -n "$SHA" ] || SHA="${{ github.sha }}"
+        set +e
+        OUT="$(bash "${{ github.action_path }}/skills/proofgate/scripts/proof.sh" verify "$SHA" --summary 2>&1)"
+        CODE=$?
+        set -e
+        printf '%s\n' "$OUT" >> "${GITHUB_STEP_SUMMARY:-/dev/null}" 2>/dev/null || true
+        printf '%s\n' "$OUT"
+        STATE=missing
+        printf '%s' "$OUT" | grep -q 'verified' && STATE=verified
+        printf '%s' "$OUT" | grep -q 'TAMPERED' && STATE=tampered
+        echo "proof=$STATE" >> "$GITHUB_OUTPUT"
+        # A missing note is not a failure by default: a team adopting this has commits
+        # from before they started sealing, and failing those teaches them the check is
+        # noise. Tampering is different — that is a positive signal, not an absence.
+        if [ "$STATE" = tampered ]; then exit 1; fi
+        if [ "${{ inputs.require-proof-note }}" = "true" ] && [ "$STATE" != verified ]; then
+          echo "::error ::require-proof-note is on and the head commit carries no verified proof note"
+          exit 1
+        fi
+        exit 0
     - name: Upload report
       if: always()
       uses: actions/upload-artifact@v4

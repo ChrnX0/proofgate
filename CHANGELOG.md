@@ -1,5 +1,546 @@
 # Changelog
 
+## 3.0.0 — 2026-09-02
+
+The proof travels with the commit.
+
+### Added
+
+- **`proof.sh` — the evidence, sealed to the commit as a git note.** Everything the gate
+  produced was local. The person reviewing the pull request read a description that
+  *claimed* a gate ran and had exactly two options: believe it, or re-do the work. That
+  is the same trust-me problem this project exists to remove, one level up.
+
+  `seal` bundles the verdict, the blast radius, the claims for this commit, the skeptic
+  record and the claim-linked audit segment, hashes each section, and attaches it under
+  `refs/notes/proofgate`. It does not change the commit and `--push` sends it with the
+  code.
+
+  **What it proves is stated precisely, in the code and in the docs**, because the
+  precision is the value: it attests to what the LOCAL gate SAW — these commands ran,
+  with these exit codes and output hashes. It does not attest that the local gate was
+  honest. So `verify` detects tampering after the seal, `replay` re-runs the recorded
+  commands and downgrades the bundle *in the note* when the evidence no longer
+  reproduces, and CI re-running the gate is the independent check. The note is what makes
+  the two comparable.
+
+  The note deliberately does not survive an amend or rebase (`notes.rewriteRef` is left
+  unset): evidence about the old commit is not evidence about the new one, and losing it
+  there is correct.
+
+- **`action.yml` verifies the note.** On a `pull_request` the checked-out commit is the
+  synthetic merge commit and the note is on the branch head — verifying the wrong sha
+  would report `missing` for every PR and teach everyone to ignore the step. A missing
+  note does not fail the job by default (teams have commits from before they started
+  sealing); **tampering does**, because that is a positive signal rather than an absence.
+  `require-proof-note` makes the stricter policy available.
+
+- **`hooks/audit-hook.sh` — a chronology, explicitly not evidence.** A PostToolUse hook is
+  not handed a reliable exit code, so every entry stores `exit: null`. A log that
+  pretended otherwise would be worse than none: it would look like evidence while being
+  unable to distinguish a command that passed from one that failed. Its real job is that
+  the edit-guard can be walked around by editing through Bash, and `.git/` is writable —
+  neither is preventable, and both leave a trace here. Opt-in, off by default.
+
+- **`tests/acceptance.sh` — the whole protocol, driven in a real repository.** Eighteen
+  steps: measure the radius, open a hypothesis, be blocked from editing, record the red
+  test, catch a pasted credential at edit time, prove red→green with the same command,
+  earn E3 with a marker, pass the gate, be blocked from pushing after the code moves,
+  seal, detect a tampered note, replay, be caught forging a ledger row, and render the
+  status from the ledger. It caught a defect no unit test could (see Fixed) and it is
+  ProofGate's own E3 evidence — for a tool made of shell and git, "the real runtime" is a
+  real repository with a real remote.
+
+- **The SKILL is now a protocol, not only a checkpoint**: RECALL → HYPOTHESIZE →
+  EXPERIMENT → IMPLEMENT → PROVE → SEAL → REPORT, each phase naming the command or hook
+  that anchors it. The gate at the end was always half the tool — by the time a status is
+  being written, the expensive mistakes have already happened.
+
+### Fixed
+
+- **A claim survived an uncommitted edit — in the display, at least.** Claims matched on
+  the HEAD sha *or* the content id, so after recording evidence and then editing a file
+  without committing, the gate still printed `✅ proof-level: central claim at E3` for a
+  run that happened against different code. Nothing false could ship — the `git-committed`
+  FAIL blocks the delivery in exactly that window — but "it fails for another reason
+  anyway" is not a defence for printing a green line that is not true, in the one place
+  whose entire job is not doing that. Found by running the gate on this very documentation
+  pass.
+
+  Matching on **content only** fixed the display and immediately broke something better:
+  the acceptance run went from 18/18 to 16/18. A **red test is evidence about the code
+  BEFORE the fix** — that is its entire purpose — so its content id can never match the
+  fixed tree, and the strict rule deleted the counter-proof from the delivery it proves.
+  Worse, `list` stopped showing the red row, leaving no id to pass to `--same-as`: the
+  red→green workflow the tool insists on became unperformable with the tool.
+
+  So the rule is exact rather than merely strict. A red row is admitted when a **current
+  green row references it** — the pair is admitted together or not at all. And `list`
+  became a browser that *labels* (`*` = still describes this code) instead of hiding,
+  because you cannot reference an id you cannot see. `achieved` and `render` stay strict;
+  they are what gates. Two more tests pin the pair rule and the labelling.
+
+- **`edit-notice` was silent on macOS.** A repo created under `mktemp -d` lives at
+  `/var/folders/...` while `git rev-parse --show-toplevel` resolves the symlink to
+  `/private/var/folders/...`, so stripping the root prefix from the edited file's path
+  left it ABSOLUTE. `memory.sh recall` matched nothing (anchors are repo-relative) and
+  the notice came back empty — the failure mode being *no output*, which is
+  indistinguishable from "nothing to say". Paths are now compared physically
+  (`pwd -P` on both sides), and a file resolving outside the repository exits early
+  instead of guessing.
+
+  Worth naming twice: the live-guard half of the same hook appeared to work, because an
+  absolute pathspec made it scan the whole working tree instead of the edited file. It
+  produced the right answer for the wrong reason, which is the kind of pass that hides a
+  defect rather than proving its absence.
+
+  Caught by the macOS CI matrix — the exact platform this delivery's own status block
+  declared as NOT TESTED. The regression test reproduces the condition with a symlinked
+  repo root, so it is pinned on every platform rather than only on the one that found it.
+
+- **Committing orphaned the evidence.** Claims were keyed to the HEAD sha at the moment
+  they were recorded, so `git commit` silently detached every claim made before it. The
+  natural order of work — do it, prove it, commit it, gate it — produced a delivery whose
+  status rendered `VERIFIED: NOTHING` with a full ledger sitting on disk. The only
+  workflow that worked was recording every claim *after* the final commit and again after
+  every amend, which is exactly the kind of ceremony people stop performing.
+
+  Evidence is now bound to the **code** it describes (`pg_content_id`: a map of path →
+  the blob actually there), not to the commit that happens to carry it. It survives the
+  commit that packages the same bytes and dies the moment the code changes — which is the
+  property worth keeping, and the one the SKILL calls *"green WHEN?"*.
+
+  **Found by the end-to-end run, not by a unit test**, against a suite that was entirely
+  green: every piece behaved exactly as specified, and the path through them did not
+  work. That is why `tests/acceptance.sh` now exists and runs in CI.
+
+- **`replay` re-ran a different command from the one it was checking.** The ledger stores
+  commands JSON-escaped, and replay pulled them out with `grep` and executed the escaped
+  form — so `printf 'calc=3\n'` ran with a literal backslash-n. That is the worst
+  possible defect in the component whose entire job is confirming that recorded evidence
+  still reproduces: it can fail honest evidence and it can pass evidence that no longer
+  holds.
+
+  The obvious fix is also wrong, and wrong in a way that looks right: a few global
+  substitutions reversing the escape cannot invert it, because `\\n` — an escaped
+  backslash followed by an `n` — matches the newline rule first. Undoing an escape needs
+  a single left-to-right scan, which is what a parser does. `pg_json_field` now reads any
+  value that will be EXECUTED through the same jq → node → python3 chain the config uses,
+  and a test pins exactly that escaping.
+
+## 2.12.0 — 2026-09-02
+
+The skeptic gets a slice; the guards get a scorecard.
+
+### Added
+
+- **`skeptic.sh` — refutations held to the standard they impose.** The adversarial pass
+  had exactly the weakness it was built to attack. A skeptic that writes *"REFUTED: this
+  probably breaks under concurrency"* has produced an **E0 claim** — words, no run — and
+  because it sounds rigorous, it is trusted more than the claim it just refuted.
+  Skepticism with nothing behind it is not the opposite of overclaiming; it is the same
+  failure wearing the other costume, and it is the more expensive one, because it sends
+  people to fix what was never broken and teaches them to discount the next finding.
+
+  So the rule is symmetric. Every REFUTED carries a command, and the recorder **re-runs
+  it**: reproduces → the refutation stands and opens a lesson; exits 0, or no command →
+  downgraded to UNPROVEN, with the original verdict kept in the record. A CONFIRMED is
+  capped at the level the claims ledger recorded, for the mirror-image reason — agreement
+  is not a run, and cannot turn E2 evidence into E3.
+
+- **A panel, sized to the blast radius.** `intent-skeptic` asks the question no other
+  check asks — *is this the thing that was requested?* Correct code that solves a
+  different problem passes every other gate and is still a failure, usually discovered by
+  the person who asked. `security-skeptic` runs only at L3, where the cost of a defect is
+  not proportional to the size of the diff: a one-character permission change is a breach,
+  a float where money should be an integer is a silent unrefundable loss. Ordinary review
+  allocates attention by lines changed, which is exactly the wrong allocation there.
+
+  Nobody runs at L1. Ceremony for a README edit teaches everyone that the ceremony is
+  noise, which is how the whole apparatus gets skipped on the day it matters.
+
+- **`impact.sh --slice`** — the scope the panel reads: the diff, the first-degree callers
+  of every changed symbol, the tests that touch them. A skeptic handed the whole
+  repository reads none of it; one handed the author's summary audits the summary.
+
+- **`99-skeptic-required`** — WARN when an L3 change has no adversarial pass for the
+  CURRENT commit (a pass recorded before the code moved is not a pass), or when the
+  security-skeptic did not run. FAIL when a reproducing refutation is still open: that is
+  a command that fails today, not an opinion. `requireSkeptic` makes the whole guard a
+  FAIL for teams that have wired the panel up.
+
+- **Guard calibration (`verify.sh --calibration`).** Every guard trades signal against
+  noise and the trade is invisible from inside one run. Three counters make it visible —
+  `fired`, `allowed` (suppressed via `proofgate-allow`, `.proofgateignore`, or a severity
+  override) and `scars` (a recorded incident credited this guard as what would have caught
+  it). High allowed with zero scars is the demotion signal.
+
+  It **reports and never applies**. A tool that quietly turned its own checks off after
+  enough suppressions would be automating precisely the erosion it exists to measure;
+  demoting a guard is a decision for a person, made with the table in front of them. A
+  test asserts that running the report leaves `proofgate.json` byte-identical.
+
+### Fixed
+
+- **The calibration report rendered an empty table.** It split the JSON on quote
+  characters and matched nothing, so the report printed headers and no rows — which reads
+  as "no guard has a problem". A report that silently shows nothing is worse than no
+  report at all.
+
+## 2.11.0 — 2026-09-02
+
+Experiments where they cannot hurt; prototypes that cannot hide.
+
+### Added
+
+- **`experiment.sh` — every hypothesis gets its own git worktree.** Testing an idea means
+  changing something, running, and changing it back, and *changing it back* is where this
+  goes wrong. Three experiments in a row leave a working tree nobody can characterise:
+  some edits reverted, some not, one half-applied — and the next result describes a state
+  that was never designed. The classic ending is a "fix" that works only because of a
+  leftover from experiment two.
+
+  Each run is isolated and cleaned up, and the result is recorded against the hypothesis
+  **by the script**, not typed afterwards by whoever remembers what happened — the same
+  rule as the claims ledger, for the same reason. `--dirty` carries uncommitted work in,
+  because an experiment about the change you are making would otherwise silently run
+  against the code as it was before you made it.
+
+  `--parallel` is what the isolation buys: independent ideas can be tested at once.
+  Sequential testing was never a requirement, only a consequence of having one working
+  tree. `--in-place` exists for what a worktree cannot serve, and is honest about the
+  cost — the tree is hashed before and after, and a mutation is recorded as
+  `tree-mutated`, because a result from a run that altered the tree describes a state
+  that no longer exists.
+
+  It never closes the hypothesis for you. An experiment produces an observation; what it
+  MEANS is the judgment this tool refuses to fake.
+
+- **Prototype mode (`mode.sh`, `hooks/prompt-hook.sh`) — real, and impossible to forget.**
+  Sometimes you are exploring and the full ceremony is genuinely the wrong price. A tool
+  that refuses to admit that gets bypassed wholesale, and a bypassed gate protects
+  nothing at all. So the mode is real: the edit-guard and stop-guard stand down.
+
+  The danger was never the mode; it is forgetting you are in it and then reporting relaxed
+  work as if it had been gated. So it is loud in four places at once — a banner on **every
+  prompt**, a line at every session start including after a compaction, `mode` in the
+  verdict, and claims capped at E1 with the status block prefixed `UNVERIFIED PROTOTYPE`.
+  Repetition is the feature here; everywhere else in this repo it would be a defect.
+
+  Two things it deliberately does not do. **The push-guard is not relaxed** — exploring
+  freely is fine, shipping unproven work is the one thing the tool exists to stop, and a
+  mode that turned that off would be the bypass with a friendlier name. And it **does not
+  expire on its own**: an auto-expiry would end the mode quietly, at a moment nobody
+  observed, making the status of any given piece of work a question of timing.
+
+### Fixed
+
+- **Parallel experiments collided.** The worktree path was composed from the clock and
+  `$$`, and two jobs started in the same second share the parent's PID — so the second
+  worktree failed to create and its experiment was lost. Uniqueness has to be atomic
+  (`mktemp`), not merely likely. Three concurrent jobs are now a test.
+
+## 2.10.0 — 2026-09-02
+
+Memory anchored to code, not to prose.
+
+### Added
+
+- **`memory.sh` — project memory that can be shown to have gone stale.** The obvious
+  version of this feature is a notes file, and the obvious version is worse than nothing.
+  A note that was true in March is indistinguishable from one that is true now, and the
+  reader — usually a model with no way to check — treats both as fact. The failure mode
+  is not forgetting. It is remembering something that stopped being true, confidently,
+  and building on it.
+
+  Every fact is ANCHORED to a file plus the blob hash that file had when it was recorded,
+  and staleness is **derived at read time, never stored**. That difference does more work
+  than it looks: there is nothing to keep in sync so nothing can drift out of sync, no
+  write on the hot path of editing, and no field an agent can flip to make an
+  inconvenient fact look current. It is the SKILL's own level 5 — derive from a single
+  source and divergence becomes impossible rather than discouraged.
+
+  Classes expire differently because they mean different things: a **decision** holds
+  until revoked, an **inference** expires when the code it read has moved, an
+  **incident** never expires. An *agent's* `decision` expires like the inference it
+  really is (`memory.agentDecisionsExpire`) — otherwise an agent makes its own conclusion
+  permanent policy by choosing a label.
+
+- **The lesson loop, closed.** The SKILL's ladder says only a guard or a test stands on
+  its own, and that stopping at "prose in a doc" is the anti-pattern. Now a recorded
+  incident OPENS a lesson, and `98-unlearned-lessons` says so on every run until
+  something at level 4 answers it — a guard carrying `proofgate-lesson: <id>`, a
+  regression test, or an explicit `--resolves`. A comment in a README deliberately does
+  not count, and a test pins that: it is level 2 wearing level 4's clothes, which is the
+  exact confusion the ladder exists to name.
+
+- **`97-memory-stale`** — WARN only when a stale fact is anchored to a file *in this
+  diff*. That restriction is the feature: warning about every stale fact in the
+  repository on every run is wallpaper within a week, and wallpaper is how a gate stops
+  being read.
+
+- **`hooks/edit-notice.sh` (PostToolUse) — the guards, brought forward to the moment of
+  the edit.** The gate is deliberately a gate: it judges the finished diff. That timing
+  is right for a verdict and wrong for feedback. A pasted credential, a
+  `rejectUnauthorized: false` added to make a cert error go away, a `.only` left on a
+  test — each is an undo in the ten seconds after writing it and a rotation or a rewrite
+  by the time the gate runs. The guards are `git diff | grep`; there was never a reason
+  for that answer to wait. It also recalls any memory anchored to the file being edited.
+  Never blocks, opt-in per half (`liveGuards`, and a memory file existing).
+
+- **`pg_added_lines`** in lib.sh: the added-lines view three guards had each hand-rolled.
+  Sharing it is not tidiness — the hand-rolled copies silently opted those guards out of
+  live mode, so `secrets`, `pii-logging` and `debug-leftovers` could not run at edit time
+  at all. Live coverage is partial by construction (guards that build their own range see
+  an empty one) and the code says so: silence there means "nothing this path can see",
+  never "clean".
+
+### Fixed
+
+- **`install.sh --uninstall` deleted the team's project memory.** It did `rm -rf` on
+  `.proofgate/`, which now holds committed content — `memory.jsonl`, `lessons.jsonl`,
+  sometimes years of it — next to the disposable vendored machinery. Removing a tool
+  should never take institutional knowledge with it. Now preserved, announced, and tested.
+
+## 2.9.0 — 2026-09-02
+
+A hypothesis outlives the context window.
+
+### Added
+
+- **`hypothesis.sh` — an append-only ledger of what was tried and what it ruled out.**
+  The SKILL has always taught the loop: mechanism, falsifiable prediction, the command
+  that reveals the mark, read the result. What it could not do is make the RESULT
+  survive. A long investigation produces refutations — *"checked the reflog, no reset"*,
+  *"there is no cache step in this pipeline at all"* — and those are the most valuable
+  thing it produces, because each one closes a branch of the search space. Then the
+  context is compacted. The summary keeps the code and the goal and drops the negative
+  results, because they read like nothing happened. The next turn proposes the dead
+  explanation again, and it is *more* convincing the second time, since nothing visible
+  contradicts it.
+
+  Refutations now live on disk. Silence is recorded as the observation it is (`the
+  predicted mark is ABSENT`), `confirm` and `refute` both require evidence, and
+  re-proposing an already-refuted idea is refused with the date and what killed it.
+  Re-wording still gets through — that limit is stated in the file rather than implied
+  away, and re-injection is what covers it.
+
+- **`hooks/session-hook.sh` (SessionStart: startup · resume · compact)** re-injects the
+  open hypotheses, the refuted ones, unresolved lessons and any mode left on. This is
+  the half that makes the ledger matter: state on disk that nobody thinks to read is
+  not memory.
+
+- **Strike escalation — the SKILL's "the bar inverts for external causes", mechanised.**
+  Refutations are counted per `--symptom`. Once the same symptom has survived two
+  explanations (`hypothesis.strikeThreshold`), the next hypothesis on it is marked
+  `escalated`, and `impact.sh` turns that into `skeptic_required`. The third guess about
+  a stubborn symptom is precisely where an invented culprit gets written down and
+  hardens into folklore, and "effect observed, cause unknown" is the better record.
+
+- **`hooks/edit-guard.sh` (PreToolUse: Edit|Write|MultiEdit, opt-in `editGuard`)** —
+  the counter-proof, enforced first. With an open bugfix hypothesis and no red-test claim
+  behind it, editing a non-test source file is blocked, with the exact command to run.
+  It exists because *first* is the part a prompt cannot enforce: at the moment of
+  editing, the intention to write the test afterwards is completely sincere. A suite that
+  was green before the edit and green after it proved that nothing else broke — not that
+  the bug is gone. Off by default, and honest about its limit: an edit made through Bash
+  never reaches a PreToolUse hook, so this raises the cost of skipping the counter-proof,
+  it does not make skipping impossible.
+
+- **`guards.d/93-hypothesis-required.sh`** — WARN when a fix branch carries no hypothesis
+  at all. A cause that is never written down is never falsified; it just gets implemented,
+  and the root-cause section ends up written backwards from the change that was made.
+
+- **`/proofgate:preflight`** — measure the radius, recall what the project already knows
+  about these files, name the E3 observation, open the hypothesis. All four are things
+  that are impossible or dishonest to do afterwards.
+
+### Fixed
+
+- **Hooks blocked with no reason attached — since 2.0.** Every hook wraps its body in
+  `{ ... } 2>/dev/null` so a broken guard can never wedge the agent. That same redirect
+  ate the block message. The contract says "exit 2 blocks and feeds stderr back to the
+  agent"; what the agent actually received was a bare refusal and no explanation — the
+  exact silent failure this project exists to forbid, shipped in the component whose job
+  is to forbid it. Deliberate output now goes to a descriptor dup'd before the wrapper,
+  and a test asserts the message reaches stderr.
+
+- **Hooks silently did nothing when installed as a plugin without vendoring.** They
+  looked for `lib.sh` in the repo's own source or in `.proofgate/`, and a repo that has
+  neither — the normal case for `/plugin marketplace add` — left `cfg` undefined, so
+  every hook exited 0. A guard that quietly does nothing is worse than no guard, because
+  the repo believes it is protected. All four hooks now fall back to the copy that ships
+  inside the plugin.
+
+- **A `pipefail` + `grep -q` trap in the test suite.** `producer | grep -q x` reports
+  failure even on a match: grep exits at the first hit, the producer dies of SIGPIPE, and
+  `pipefail` promotes that to the pipeline's status. Three passing checks looked like
+  failures. Captured first, then matched — noted in the tests, because a check that
+  cries wolf is how people learn to ignore red.
+
+## 2.8.0 — 2026-09-02
+
+The report is rendered, not written.
+
+### Added
+
+- **`claim.sh` — a claims ledger where the evidence level is EARNED, not typed.** The
+  judgment gate has always said a runtime claim is done only at E3. It also, until now,
+  let an agent that ran nothing type `VERIFIED (E3): the checkout flow works` — every
+  word free. The evidence hierarchy, the banned-language list, the excuse-buster table:
+  all of it rested on the author volunteering an honest level at exactly the moment they
+  are least inclined to. That is not a discipline problem, it is a missing mechanism.
+
+  `claim.sh add --run "<cmd>"` **executes the command**, records the exit code, a hash of
+  the output and the duration, and appends a hash-chained row. There is no code path that
+  writes a level above E0 without this script having run something. Four refusals close
+  the obvious ways around it:
+
+  - `--run "true"`, `npm test || true`, `pytest ; exit 0` — a command whose exit status
+    cannot change proves nothing. (A real pipeline like `cat x | grep -q y` is fine; the
+    check distinguishes a simple constant-status command and a success-forcing suffix
+    from a pipeline that can actually go red.)
+  - **E3/E4 require `--expect`** — a marker that must appear in the output. "It returned
+    200" is compatible with the old build still being live, which is why the SKILL has
+    always asked for a marker unique to the NEW version. Now it is mechanical.
+  - **`--kind red-test` is refused if the command passes.** A test that was never red has
+    never shown it can see the bug.
+  - **`--kind green-test` must re-run the same command as its `--same-as` red row.** A
+    different command passing proves a different thing.
+
+  A run that fails, or a marker that does not appear, still writes the row — at **E0**,
+  with the reason recorded. That row is the valuable one: it is how "not verified"
+  survives into the status instead of being smoothed over.
+
+- **`claim.sh render` — the status block is GENERATED.** It is assembled from the verdict,
+  the blast radius and the ledger, so every line traces to something that ran. The SKILL
+  and the templates now say plainly: a status you compose by hand is E0 by construction,
+  because nothing produced it. An empty ledger renders as `VERIFIED: NOTHING`, which is
+  the delivery's real state, not a formatting problem.
+
+- **`proof-level`: required vs achieved, with three distinct outcomes.** The blast radius
+  says what this change owes; the ledger says what was earned. `proven` · `unproven` (the
+  evidence is missing and producible here) · `cannot_prove` (it is impossible here — no
+  e2e command, no `smoke[]`, no dev server to curl).
+
+  Keeping the third separate is the whole point. `cannot_prove` is a fact about the
+  machine, not a defect in the diff: nothing the author writes makes an absent runtime
+  appear. So it is a NOTE by default and never fails `--strict` — a rule that failed
+  every delivery on every box without an e2e setup would not be rigour, it would be the
+  fastest possible route to `alias verify=true`. Repos that want it enforced set
+  `requireProof: true`, and then the push-guard and stop-guard block with the missing
+  capability named.
+
+- **Hash-chained ledgers + the `ledger-chain` check.** Every row carries the hash of the
+  row before it, so a line appended or edited by hand — the agent writing its own
+  evidence — breaks the chain and FAILS the gate. Stated honestly in the code and here:
+  this is tamper-**evident**, not tamper-proof. Anything with a shell can recompute the
+  whole chain. What it removes is the cheap, deniable edit, and it makes the expensive
+  one visible.
+
+- **`/proofgate:claim` and `/proofgate:report`**, plus `requireProof` in the config
+  reference.
+
+## 2.7.0 — 2026-09-02
+
+The gate learns how big the change is.
+
+### Added
+
+- **`impact.sh` — the blast radius, computed before anything is judged.** Every run now
+  starts by measuring what the diff can break: the changed files, the symbols inside the
+  changed line ranges, their first-degree callers, the tests that touch those symbols,
+  and the direct importers. The measurement lands in `.git/proofgate-impact.json` and
+  drives everything downstream.
+
+  The scar is not a bug report — it is the shape of every gate that gets switched off.
+  A gate with one fixed price teaches the team that its ceremony is noise, because the
+  README edit and the migration to the payments table pay exactly the same toll. The
+  cheapest way to make ProofGate ignorable was to keep charging full price for a typo.
+  So the price is now proportional, and *proportional to what* is computed rather than
+  felt:
+
+  | Class | What it is | Evidence it owes |
+  |---|---|---|
+  | **L1** | docs, tests, config only | E1 |
+  | **L2** | source with callers | **E3** |
+  | **L3** | auth · money · migrations · crypto · permissions | **E3 + a mandatory adversarial pass** |
+
+  Two properties keep that from being theater. The range is the **whole branch plus the
+  working tree** — `merge-base..HEAD` *and* uncommitted edits — because a radius computed
+  on the tip would be gamed by the oldest trick there is: put the migration in commit one,
+  put a docs change in commit three, gate commit three. And "sensitive" is decided by
+  **content as well as path**, so money math filed under `utils/helpers.ts` is still L3.
+
+- **Declared degradation, everywhere.** With Universal Ctags on PATH, symbols come from a
+  real symbol table and the output says `navigation_confidence: high`. Without it — or with
+  the Exuberant ctags macOS ships — callers come from a word-boundary grep, confidence says
+  `low`, and a `degradations` list names exactly what could not be done. This matters more
+  than the feature it qualifies: an empty caller list from a low-confidence run means *"I
+  found none"*, not *"there are none"*, and a tool that lets you confuse those two is the
+  thing this project exists to stop. `impact.backendCmd` is the seam for a real language
+  server: a command that reads changed paths on stdin and prints symbols and callers back.
+  Point it at an LSP client and confidence becomes `high` without ProofGate pretending to
+  speak JSON-RPC.
+
+- **`max_achievable_level` — the difference between unproven and unprovable.** On a machine
+  with no e2e command, no `smoke[]`, and no dev server to curl, E3 cannot be produced at
+  all. Demanding it anyway would fail every delivery for a reason the author cannot fix,
+  which is how a gate earns an alias in someone's shell profile. The verdict now reports
+  what is *reachable* here, so "not proven" and "not provable on this box" stop being the
+  same sentence.
+
+- **Verdict v2, strictly additive.** `schemaVersion` is 2 and the document carries the
+  impact summary, `required_level`, `max_achievable_level` and `degradations`. The v1
+  prefix is byte-identical through `"pass"`, the file stays on one line, and it contains
+  **exactly one** `"sha":` and one `"pass":` — nested objects say `head_sha`/`base_sha`
+  instead. That is not fussiness: four readers parse this file with `sed`/`grep`, and one
+  of them is the pre-push hook `install.sh` already wrote into users' repositories, which
+  never updates itself. Their `sed` is greedy — a second `"sha"` anywhere in the document
+  would silently win. A test now pins the invariant.
+
+- **`caso_tool`** in the test harness: `caso_verify` generalized to any script, so every
+  tool from here on gets the same real fixture (real repo, real remote, real base). It
+  runs the tool with stdin closed — a tool that reads stdin by accident should fail a
+  test, not hang the suite.
+
+- **A portability test and a documentation test.** CI runs macOS (bash 3.2, BSD userland),
+  where `declare -A`, `mapfile`, `sed -i`, `date -d` and friends fail on a box where the
+  author saw green — the worst kind of failure. A grep over every shipped script now
+  catches them locally. And the guard count, written by hand in five files, was already
+  wrong: the docs said 18 while `guards.d` held 19. A number a human maintains drifts, so
+  it is asserted against `ls guards.d` instead.
+
+- **`self-gate` CI job.** ProofGate runs its own gate on its own diff, with Universal
+  Ctags installed so the high-confidence path is exercised rather than assumed. A tool
+  that cannot pass the standard it sells is selling theater.
+
+### Fixed
+
+- **Guard count drift in `SKILL.md`, `plugin.json`, `marketplace.json` and `action.yml`**
+  (18 → 19), found by the new test rather than by a reader.
+
+- **`.proofgateignore` is no longer scanned by the guards.** Found by the self-gate on
+  this very release, and it is an ouroboros worth naming: suppressing a finding requires
+  writing the offending pattern into the ignore file — that is how you say *which*
+  finding — and the guards then flagged the suppression file. Every escape hatch that
+  forces you to quote what you are escaping has this bug; ProofGate's own control files
+  are now excluded like the rest of its source.
+
+- **`sourceless-diff` now reads the impact measurement instead of re-deriving it.**
+  The engine had two different rules for "how much source is in this diff" — impact's
+  file classification, and a narrower path-glob-plus-extension heuristic in the
+  blind-gate check. On this repository they disagreed completely: impact reported 17
+  source files while the check announced the guards had been looking at nothing. A
+  warning that contradicts the line printed four seconds earlier teaches people to
+  ignore both. One measurement, read by both; the old heuristic survives only as the
+  fallback for `--no-impact` and for vendored copies without `impact.sh`.
+
+- **The sensitive-term scan reads source files only.** Also found by the self-gate: a
+  README, a changelog and an annotated config example that DESCRIBE the term list were
+  escalating this release to L3 for the crime of documenting what L3 means. Terms are a
+  signal about code, not about prose.
+
 ## 2.6.0 — 2026-08-07
 
 `--only` can finally run the guard you just wrote.

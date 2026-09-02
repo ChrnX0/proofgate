@@ -6,6 +6,9 @@
 set -uo pipefail
 # shellcheck source=/dev/null
 . "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
+# The range now comes from pg_added_lines (which reads PROOFGATE_BASE itself); this
+# assertion stays because the contract still requires the variable to be set.
+# shellcheck disable=SC2034
 BASE="${PROOFGATE_BASE:?}"
 
 TERMS="$(cfg '.piiTerms')"
@@ -13,8 +16,8 @@ TERMS="${TERMS:-password|passwd|ssn|social.?security|cpf|credit.?card|card.?numb
 
 SINKS='console\.(log|error|warn|info)|logger\.|logging\.|log\.(info|warn|error|debug)|print\(|println!|captureException|captureMessage|Sentry|track\('
 
-HITS=$(git diff "$BASE"..HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.rb' '*.go' '*.rs' '*.java' '*.kt' "${PG_SELF_EXCLUDE[@]}" \
-  | grep -E '^\+' | grep -v 'proofgate-allow' | grep -E "$SINKS" | grep -Eic "$TERMS" || true)
+HITS=$(pg_added_lines '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.rb' '*.go' '*.rs' '*.java' '*.kt' \
+  | grep -E "$SINKS" | grep -Eic "$TERMS" || true)
 
 if [ "${HITS:-0}" -gt 0 ]; then
   echo "⚠️  PII→logs: $HITS added line(s) both log AND mention personal-data terms — check nothing sensitive is serialized (term list: piiTerms in proofgate.json)"

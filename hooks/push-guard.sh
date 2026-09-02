@@ -16,6 +16,14 @@
 # Escape hatches: PROOFGATE_HOOK_OFF=1 (env) · "pushGuard": false (proofgate.json).
 set -uo pipefail
 
+# NOTE on the fail-open wrapper below. Everything is wrapped in `{ ... } 2>/dev/null`
+# so that a broken guard can never wedge the agent — but that same redirect silently ate
+# this hook's own block message for four releases. The contract says "exit 2 blocks and
+# feeds stderr back to the agent"; what the agent actually received was a bare refusal
+# with no reason, which is the exact silent failure this project exists to forbid.
+# So the deliberate output goes to fd 3, dup'd from the real stderr BEFORE the wrapper,
+# where the noise-suppressing redirect cannot reach it.
+exec 3>&2
 INPUT="$(cat 2>/dev/null || true)"
 
 # 0) Cheap prefilter — this hook fires on EVERY Bash call; the common path is two
@@ -46,7 +54,14 @@ except Exception:pass' 2>/dev/null)"
   # 3) Opt-in: only guard repos that adopted ProofGate.
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
   { [ -f "$ROOT/proofgate.json" ] || [ -d "$ROOT/.proofgate" ]; } || exit 0
-  PG="$ROOT/skills/proofgate/scripts/lib.sh"; [ -f "$PG" ] || PG="$ROOT/.proofgate/lib.sh"
+  # lib.sh, in order: this repo's own source · what install.sh vendored · the copy that
+  # ships INSIDE this plugin. The third fallback matters: installed as a Claude Code
+  # plugin without ever running install.sh, the first two are absent, `cfg` is undefined,
+  # and every hook quietly exits 0 — a guard that silently does nothing is worse than no
+  # guard, because the repo believes it is protected.
+  PG="$ROOT/skills/proofgate/scripts/lib.sh"
+  [ -f "$PG" ] || PG="$ROOT/.proofgate/lib.sh"
+  [ -f "$PG" ] || PG="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../skills/proofgate/scripts" 2>/dev/null && pwd)/lib.sh"
   # shellcheck source=/dev/null
   [ -f "$PG" ] && PROOFGATE_CFG="$ROOT/proofgate.json" . "$PG" 2>/dev/null
   if command -v cfg >/dev/null 2>&1; then
@@ -55,7 +70,7 @@ except Exception:pass' 2>/dev/null)"
 
   # 4) Anti-bypass: block AND name the attempt (the differentiator vs a git hook).
   if printf '%s' "$CMD" | grep -Eq -- '--no-verify|core\.hooksPath'; then
-    echo "ProofGate: push blocked — this command tries to bypass verification (--no-verify / core.hooksPath). Run the gate and push cleanly, or set pushGuard:false in proofgate.json if you truly mean to." >&2
+    echo "ProofGate: push blocked — this command tries to bypass verification (--no-verify / core.hooksPath). Run the gate and push cleanly, or set pushGuard:false in proofgate.json if you truly mean to." >&3
     exit 2
   fi
 
@@ -70,9 +85,33 @@ except Exception:pass' 2>/dev/null)"
     fi
   fi
 
+
+  # requireProof (opt-in): a passing mechanical verdict says "nothing I check is
+  # broken", which is not the same as "the claim is proven". Repos that want the
+  # stronger contract set requireProof:true and the push waits for the evidence.
+  # Pure literal greps — this hook must not depend on a JSON parser.
+  if [ "$(cfg '.requireProof' 2>/dev/null)" = "true" ] && [ -f "$V" ]; then
+    if grep -q '"proof":{"status":"cannot_prove"' "$V" 2>/dev/null; then
+      MISS="$(grep -o '"missing":"[^"]*"' "$V" 2>/dev/null | head -1 | sed -e 's/^"missing":"//' -e 's/"$//')"
+      echo "ProofGate: push blocked — the delivery requires evidence this machine cannot produce (${MISS:-no runtime driver}). Configure commands.e2e or smoke[] in proofgate.json, or set requireProof:false and say plainly in your status that the runtime claim is UNPROVEN." >&3
+      exit 2
+    elif grep -q '"proof":{"status":"unproven"' "$V" 2>/dev/null; then
+      echo "ProofGate: push blocked — the mechanical gate passed, but the central claim has not been PROVEN to the level this change requires. Record the run: claim.sh add --claim \"...\" --level <E3> --run \"<cmd>\" --expect \"<marker>\". (Bypass: requireProof:false in proofgate.json.)" >&3
+      exit 2
+    fi
+  fi
+
+  # Prototype mode explicitly does NOT relax this one. Exploring freely is fine;
+  # pushing unproven work is the single thing the tool exists to prevent, and a mode
+  # that turned the push gate off would just be the bypass with a friendlier name.
+  if [ -f "$GD/proofgate-mode" ]; then
+    echo "ProofGate: push blocked — prototype mode relaxes the edit- and stop-guards, NOT the push. Anything claimed while it was on is capped at E1. Leave the mode (\`mode.sh off\`), run the gate, record the evidence, then push." >&3
+    exit 2
+  fi
+
   # 6) Block with an actionable reason.
   GATE="bash .proofgate/verify.sh"; [ -f "$ROOT/.proofgate/verify.sh" ] || GATE="the ProofGate skill / verify.sh"
-  echo "ProofGate: push blocked — no fresh passing verdict for HEAD ${HEAD_SHA:0:7}. Run \`$GATE\` (it must pass), then push. Bypass: pushGuard:false in proofgate.json, or PROOFGATE_HOOK_OFF=1." >&2
+  echo "ProofGate: push blocked — no fresh passing verdict for HEAD ${HEAD_SHA:0:7}. Run \`$GATE\` (it must pass), then push. Bypass: pushGuard:false in proofgate.json, or PROOFGATE_HOOK_OFF=1." >&3
   exit 2
 } 2>/dev/null || exit 0
 exit 0

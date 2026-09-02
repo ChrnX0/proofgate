@@ -6,19 +6,26 @@
   },
   "metadata": {
     "description": "ProofGate — the acceptance gate that doesn't accept 'I think it works.'",
-    "version": "2.6.0"
+    "version": "3.0.0"
   },
   "plugins": [
     {
       "name": "proofgate",
       "source": "./",
-      "description": "Four-layer delivery gate: a mechanical gate with a SHA-bound verdict (18 diff guards), a judgment gate with an evidence hierarchy, an adversarial skeptic, and hooks that refuse to push or declare done without proof. Born from real production scars in AI-assisted development.",
+      "description": "A delivery gate that charges in proportion to what the change can break, and where evidence is EARNED rather than typed: claims are recorded by running the command that proves them, refutations outlive a context compaction, memory anchored to code announces its own staleness, the status is generated from the ledger, and the proof is sealed to the commit as a git note CI verifies. 23 diff guards, a SHA-bound verdict, hooks that refuse an unproven push. Born from real production scars in AI-assisted development.",
       "author": {
         "name": "Paulo Eduardo",
         "url": "https://github.com/ChrnX0"
       },
       "license": "MIT",
-      "keywords": ["quality-gate", "verification", "ai-agents", "definition-of-done"]
+      "keywords": [
+        "quality-gate",
+        "verification",
+        "ai-agents",
+        "definition-of-done",
+        "evidence",
+        "blast-radius"
+      ]
     }
   ]
 }

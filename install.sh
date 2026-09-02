@@ -9,7 +9,7 @@
 #   bash install.sh --uninstall                         # remove what we added
 #
 # What it does (and nothing else):
-#   1. copies verify.sh + lib.sh + guards.d/ + templates/ into .proofgate/
+#   1. copies verify.sh + lib.sh + impact.sh + claim.sh + hypothesis.sh + memory.sh + experiment.sh + mode.sh + skeptic.sh + proof.sh + guards.d/ + templates/ into .proofgate/
 #   2. --hook: wires .git/hooks/pre-push to gate before every push (existing hook
 #      is preserved as pre-push.local and still runs — we never clobber it)
 #   3. --ci: writes .github/workflows/proofgate.yml (warn-only to start)
@@ -29,7 +29,19 @@ DEST="$ROOT/.proofgate"
 MARK="# ProofGate pre-push hook"
 
 if [ "$UNINSTALL" = 1 ]; then
+  # .proofgate/ holds vendored MACHINERY (disposable) next to the team's committed
+  # MEMORY — memory.jsonl and lessons.jsonl, which are content, tracked in git and
+  # sometimes years old. `rm -rf` on the directory would delete an uninstall's worth of
+  # institutional knowledge as a side effect of removing a tool.
+  KEEP="$(mktemp -d)"
+  for f in memory.jsonl lessons.jsonl; do [ -f "$DEST/$f" ] && cp "$DEST/$f" "$KEEP/$f"; done
   rm -rf "$DEST"
+  if ls "$KEEP"/*.jsonl >/dev/null 2>&1; then
+    mkdir -p "$DEST"
+    cp "$KEEP"/*.jsonl "$DEST/" 2>/dev/null || true
+    echo "▫️  kept your project memory (.proofgate/memory.jsonl, lessons.jsonl) — that is content, not tooling"
+  fi
+  rm -rf "$KEEP"
   if [ -f "$GD/hooks/pre-push" ] && grep -q "$MARK" "$GD/hooks/pre-push" 2>/dev/null; then
     if [ -f "$GD/hooks/pre-push.local" ]; then mv "$GD/hooks/pre-push.local" "$GD/hooks/pre-push"; else rm -f "$GD/hooks/pre-push"; fi
   fi
@@ -43,6 +55,14 @@ vendor() { # copy from local clone if present, else from the release tarball
   if [ -f "$SRC_DIR/skills/proofgate/scripts/verify.sh" ]; then
     cp "$SRC_DIR/skills/proofgate/scripts/verify.sh" "$DEST/verify.sh"
     cp "$SRC_DIR/skills/proofgate/scripts/lib.sh" "$DEST/lib.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/impact.sh" "$DEST/impact.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/claim.sh" "$DEST/claim.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/hypothesis.sh" "$DEST/hypothesis.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/memory.sh" "$DEST/memory.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/experiment.sh" "$DEST/experiment.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/mode.sh" "$DEST/mode.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/skeptic.sh" "$DEST/skeptic.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/proof.sh" "$DEST/proof.sh"
     rm -rf "$DEST/guards.d" && cp -r "$SRC_DIR/skills/proofgate/scripts/guards.d" "$DEST/guards.d"
     rm -rf "$DEST/templates" && cp -r "$SRC_DIR/templates" "$DEST/templates" 2>/dev/null || true
   else
@@ -50,13 +70,21 @@ vendor() { # copy from local clone if present, else from the release tarball
     curl -fsSL https://github.com/ChrnX0/proofgate/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP"
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/verify.sh "$DEST/verify.sh"
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/lib.sh "$DEST/lib.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/impact.sh "$DEST/impact.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/claim.sh "$DEST/claim.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/hypothesis.sh "$DEST/hypothesis.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/memory.sh "$DEST/memory.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/experiment.sh "$DEST/experiment.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/mode.sh "$DEST/mode.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/skeptic.sh "$DEST/skeptic.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/proof.sh "$DEST/proof.sh"
     rm -rf "$DEST/guards.d" && cp -r "$TMP"/proofgate-main/skills/proofgate/scripts/guards.d "$DEST/guards.d"
     rm -rf "$DEST/templates" && cp -r "$TMP"/proofgate-main/templates "$DEST/templates" 2>/dev/null || true
     rm -rf "$TMP"
   fi
 }
 vendor
-chmod +x "$DEST/verify.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
+chmod +x "$DEST/verify.sh" "$DEST/impact.sh" "$DEST/claim.sh" "$DEST/hypothesis.sh" "$DEST/memory.sh" "$DEST/experiment.sh" "$DEST/mode.sh" "$DEST/skeptic.sh" "$DEST/proof.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
 set -- "$DEST"/guards.d/*.sh; echo "✅ vendored: .proofgate/verify.sh + lib.sh (+ $# guards)"
 
 if [ "$HOOK" = 1 ]; then
@@ -127,5 +155,11 @@ EOF
 fi
 
 echo
-echo "Run it now:   bash .proofgate/verify.sh --dry-run"
-echo "Judgment gate: https://github.com/ChrnX0/proofgate#-what-proofgate-actually-is"
+echo "Run it now:      bash .proofgate/verify.sh --dry-run"
+echo "Before you code: bash .proofgate/impact.sh --json   (what can this change break?)"
+echo "Record evidence: bash .proofgate/claim.sh add --claim \"...\" --level E3 --run \"<cmd>\" --expect \"<marker>\""
+echo "Your status:     bash .proofgate/claim.sh render    (generated — a typed one is E0)"
+echo
+echo "Everything past the mechanical gate is OPT-IN and off by default:"
+echo "  editGuard · liveGuards · audit · requireProof · requireSkeptic · stopGuard"
+echo "Full reference: https://github.com/ChrnX0/proofgate#%EF%B8%8F-configuration-optional"

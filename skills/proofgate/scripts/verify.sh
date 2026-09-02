@@ -12,6 +12,8 @@
 #   bash verify.sh --dry-run          # show what would run, run nothing
 #   bash verify.sh --base <ref>       # diff base (default: merge-base with origin default branch)
 #   bash verify.sh --report <file>    # also write a markdown report
+#   bash verify.sh --no-impact        # skip the blast-radius computation
+#   bash verify.sh --calibration      # report which guards are earning their noise
 #
 # Exit codes: 0 = gate passed (warnings allowed unless --strict) · 1 = gate FAILED.
 #
@@ -26,7 +28,7 @@
 set -uo pipefail
 
 # ── flags ────────────────────────────────────────────────────────────────────
-BUILD=0 STRICT=0 DRY=0 JSON=0 SMOKE=0 ONLY="" BASE_REF="" REPORT=""
+BUILD=0 STRICT=0 DRY=0 JSON=0 SMOKE=0 ONLY="" BASE_REF="" REPORT="" NOIMPACT=0 CALIB=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --build) BUILD=1 ;;
@@ -37,6 +39,8 @@ while [ $# -gt 0 ]; do
     --only) shift; ONLY="${1:-}" ;;
     --base) shift; BASE_REF="${1:-}" ;;
     --report) shift; REPORT="${1:-}" ;;
+    --no-impact) NOIMPACT=1 ;;
+    --calibration) CALIB=1 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)" >&2; exit 1 ;;
   esac
@@ -46,6 +50,8 @@ done
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || exit 1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS_DIR="$SCRIPT_DIR/guards.d"
+IMPACT_SH="$SCRIPT_DIR/impact.sh"
+CLAIM_SH="$SCRIPT_DIR/claim.sh"
 CFG="proofgate.json"
 export PROOFGATE_CFG="$CFG" PROOFGATE_LIB="$SCRIPT_DIR/lib.sh"
 # shellcheck source=/dev/null
@@ -87,6 +93,49 @@ run_step() { # run_step <label> <command...>
 }
 
 say "── ProofGate · mechanical gate ─────────────────────────────"
+[ -f "$(pg_git_dir 2>/dev/null || echo .git)/proofgate-mode" ] && \
+  note "PROTOTYPE MODE is on — the edit- and stop-guards are relaxed and claims are capped at E1. This verdict records mode:prototype; the push is still gated." mode
+
+# ── diff base, resolved ONCE and up front ────────────────────────────────────
+# It used to be resolved just before the guards. Impact has to know the range
+# before the first command runs (it decides the required evidence level, which the
+# verdict reports), and two places computing "the base" independently is exactly
+# the divergence this project keeps finding in other people's code.
+if [ -z "$BASE_REF" ]; then
+  DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+  [ -z "$DEFAULT_BRANCH" ] && for b in main master; do git rev-parse "origin/$b" >/dev/null 2>&1 && { DEFAULT_BRANCH="$b"; break; }; done
+  [ -n "$DEFAULT_BRANCH" ] && BASE_REF="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD 2>/dev/null || true)"
+fi
+
+# ── blast radius (impact.sh) ─────────────────────────────────────────────────
+# One measurement, many consumers: the required evidence level, whether a skeptic
+# pass is mandatory, what the skeptic reads, and which memory the change stales.
+# It is a NOTE, never a warning: a low-confidence backend is a fact about the
+# machine, not a defect in the delivery, and a warning printed on every run of
+# every repo without ctags would be wallpaper within a day.
+IMPACT_JSON="$(pg_git_dir 2>/dev/null || echo .git)/proofgate-impact.json"
+RISK="" REQUIRED_LEVEL="" MAX_LEVEL="" SKEPTIC_REQ="" NAV_BACKEND="" NAV_CONF="" IMPACT_DEGR=""
+if [ "$NOIMPACT" != 1 ] && [ -z "$ONLY" ] && [ -f "$IMPACT_SH" ] && command -v pg_scalar >/dev/null 2>&1; then
+  if [ "$DRY" = 1 ]; then
+    note "would compute impact (blast radius)" impact
+  else
+    with_timeout bash "$IMPACT_SH" ${BASE_REF:+--base "$BASE_REF"} </dev/null >/dev/null 2>&1 || true
+    if [ -f "$IMPACT_JSON" ]; then
+      RISK="$(pg_scalar "$IMPACT_JSON" risk_class)"
+      REQUIRED_LEVEL="$(pg_scalar "$IMPACT_JSON" required_level)"
+      MAX_LEVEL="$(pg_scalar "$IMPACT_JSON" max_achievable_level)"
+      SKEPTIC_REQ="$(pg_scalar "$IMPACT_JSON" skeptic_required)"
+      NAV_BACKEND="$(pg_scalar "$IMPACT_JSON" navigation_backend)"
+      NAV_CONF="$(pg_scalar "$IMPACT_JSON" navigation_confidence)"
+      IMPACT_DEGR="$(grep -o '"code":"[^"]*"' "$IMPACT_JSON" 2>/dev/null | sed -e 's/^"code":"//' -e 's/"$//' | tr '\n' ' ')"
+      export PROOFGATE_IMPACT="$IMPACT_JSON"
+      note "impact: ${RISK:-?} · $(pg_scalar "$IMPACT_JSON" files_n) file(s) · $(pg_scalar "$IMPACT_JSON" symbols_n) symbol(s) · $(pg_scalar "$IMPACT_JSON" callers_n) caller(s) · needs ${REQUIRED_LEVEL:-?} · nav ${NAV_BACKEND:-?} (${NAV_CONF:-?})${IMPACT_DEGR:+ · declared: $IMPACT_DEGR}" impact
+      if [ "$SKEPTIC_REQ" = "true" ]; then
+        note "impact: this diff is $RISK — an adversarial pass is REQUIRED before 'done' ($(pg_json "$IMPACT_JSON" '.risk_reasons[0]' 2>/dev/null | head -c 120))" impact-skeptic
+      fi
+    fi
+  fi
+fi
 
 # ── stack detection + configured commands ───────────────────────────────────
 PM=""
@@ -160,6 +209,7 @@ EOF
       [ -f "$guard" ] || continue
       gname="$(basename "$guard" .sh | sed -E 's/^[0-9]+-//')"
       [ "$gname" = "$ONLY" ] || continue
+      export PROOFGATE_GUARD="$gname"
       OUT="$(with_timeout bash "$guard" 2>&1)"; CODE=$?
       printf '%s\n' "$OUT"
       exit "$( [ "$CODE" = 1 ] && echo 1 || echo 0 )"
@@ -168,6 +218,40 @@ EOF
 $ONLY_DIRS
 EOF
   echo "no guard named '$ONLY' (looked in: $(echo "$ONLY_DIRS" | tr '\n' ' '))" >&2; exit 1
+fi
+
+# ── --calibration: the scoreboard, reported and never applied ────────────────
+if [ "$CALIB" = 1 ]; then
+  CF="$(pg_git_dir)/proofgate-calibration.jsonl"
+  if [ ! -f "$CF" ]; then
+    echo "no calibration data yet — it accumulates as guards fire and as findings are suppressed"
+    exit 0
+  fi
+  printf '%-28s %6s %8s %6s   %s\n' GUARD FIRED ALLOWED SCARS NOTE
+  # Two columns extracted with sed (the JSON is single-line and fixed-shape), then
+  # folded with awk. Splitting the raw line on quote characters was fragile and produced
+  # an EMPTY table — a report that silently shows nothing is worse than no report, since
+  # it reads as "no guard has a problem".
+  sed -n 's/.*"guard":"\([^"]*\)".*"event":"\([^"]*\)".*/\1 \2/p' "$CF" 2>/dev/null | awk '
+    { seen[$1] = 1; c[$1 "|" $2]++ }
+    END {
+      for (g in seen) {
+        f = c[g "|fired"] + 0; a = c[g "|allowed"] + 0; s = c[g "|scar"] + 0
+        note = ""
+        # Reported, never applied. Deliberately unforgiving to state and deliberately
+        # powerless to act: a guard suppressed at least half the times it fires, often
+        # enough that it is not chance, and never once credited with catching anything
+        # real, is a CANDIDATE for demotion — and that call belongs to a person.
+        if (f >= 5 && a * 2 >= f && s == 0) note = "candidate for demotion — suppressed " a "/" f " times, never credited with a scar"
+        else if (s > 0) note = "earned it: credited in " s " recorded incident(s)"
+        printf "%-28s %6d %8d %6d   %s\n", g, f, a, s, note
+      }
+    }' | LC_ALL=C sort
+  echo
+  echo "Nothing here changes any configuration. A tool that quietly turned its own checks"
+  echo "off after enough suppressions would automate exactly the erosion it measures —"
+  echo "demoting a guard is a decision for a person, made with this table in front of them."
+  exit 0
 fi
 
 run_named typecheck
@@ -221,13 +305,7 @@ if [ "$SMOKE" = 1 ]; then
   fi
 fi
 
-# ── diff base + guards (guards.d/*.sh + config.guardsDirs, alphabetical) ──────
-if [ -z "$BASE_REF" ]; then
-  DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
-  [ -z "$DEFAULT_BRANCH" ] && for b in main master; do git rev-parse "origin/$b" >/dev/null 2>&1 && { DEFAULT_BRANCH="$b"; break; }; done
-  [ -n "$DEFAULT_BRANCH" ] && BASE_REF="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD 2>/dev/null || true)"
-fi
-
+# ── guards (guards.d/*.sh + config.guardsDirs, alphabetical) ─────────────────
 FIRED=""   # guard names that produced a fail/warn (for the ledger)
 if [ -n "$BASE_REF" ] && [ "$BASE_REF" != "$(git rev-parse HEAD)" ]; then
   export PROOFGATE_BASE="$BASE_REF" PROOFGATE_STRICT="$STRICT"
@@ -253,12 +331,15 @@ EOF
       if [ -n "$sev" ] && [ "$sev" != "off" ]; then
         case "$sev" in fail) [ "$CODE" != 0 ] && CODE=1 ;; warn) [ "$CODE" = 1 ] && CODE=2 ;; esac
         note "severity override: $gname → $sev (proofgate.json)"
+        command -v pg_calib >/dev/null 2>&1 && pg_calib "$gname" allowed "severity override → $sev"
       fi
       [ -n "$OUT" ] && while IFS= read -r line; do say "$line"; done <<< "$OUT"
       case $CODE in
         0) record "$gname" pass "$OUT" ;;
-        1) FAILS=$((FAILS + 1)); FIRED="$FIRED $gname"; record "$gname" fail "$OUT"; gh_annot error "$OUT" ;;
-        2) WARNS=$((WARNS + 1)); FIRED="$FIRED $gname"; record "$gname" warn "$OUT"; gh_annot warning "$OUT" ;;
+        1) FAILS=$((FAILS + 1)); FIRED="$FIRED $gname"; record "$gname" fail "$OUT"; gh_annot error "$OUT"
+           command -v pg_calib >/dev/null 2>&1 && pg_calib "$gname" fired fail ;;
+        2) WARNS=$((WARNS + 1)); FIRED="$FIRED $gname"; record "$gname" warn "$OUT"; gh_annot warning "$OUT"
+           command -v pg_calib >/dev/null 2>&1 && pg_calib "$gname" fired warn ;;
       esac
     done
   done <<EOF
@@ -271,16 +352,82 @@ EOF
   # exactly when the delivery was just published. Guards cannot catch this themselves —
   # from inside a guard an empty diff is indistinguishable from a clean one. Only the
   # engine knows how big the diff it handed them was.
-  SRC_GLOBS="$(cfg '.sourceGlobs')"; SRC_GLOBS="${SRC_GLOBS:-src/|lib/|app/}"
-  SRC_IN_DIFF=$(git diff --name-only "$BASE_REF"..HEAD 2>/dev/null \
-    | grep -Ev '(guards\.d/|^\.proofgate/)' \
-    | grep -E "($SRC_GLOBS)" \
-    | grep -Ec '\.(ts|tsx|js|jsx|py|rb|go|rs|java|kt|swift|cs|php)$' || true)
+  # "How much source is in this diff" is now measured ONCE, by impact.sh, and read
+  # back here. It used to be re-derived with a second, narrower rule — a path glob
+  # plus a shorter extension list — and the two disagreed: on this very repo impact
+  # reported 17 source files while this check reported none, so a gate that had just
+  # measured the change announced it had been looking at nothing. Deriving both from
+  # one source is the SKILL's own level-5 fix; the old heuristic stays only as the
+  # fallback for --no-impact and for a vendored copy without impact.sh.
+  if [ -n "${RISK:-}" ] && [ -f "$IMPACT_JSON" ]; then
+    SRC_IN_DIFF="$(pg_scalar "$IMPACT_JSON" source_n)"
+  else
+    SRC_GLOBS="$(cfg '.sourceGlobs')"; SRC_GLOBS="${SRC_GLOBS:-src/|lib/|app/}"
+    SRC_IN_DIFF=$(git diff --name-only "$BASE_REF"..HEAD 2>/dev/null \
+      | grep -Ev '(guards\.d/|^\.proofgate/)' \
+      | grep -E "($SRC_GLOBS)" \
+      | grep -Ec '\.(ts|tsx|js|jsx|py|rb|go|rs|java|kt|swift|cs|php)$' || true)
+  fi
   if [ "${SRC_IN_DIFF:-0}" -eq 0 ]; then
     warn "sourceless-diff: the guarded diff has NO source file (docs/config only). If you just promoted this work, the diff guards above are BLIND — their ✅ means 'nothing to look at', not 'nothing wrong'. Re-run with --base <sha before the block>." "sourceless-diff"
   fi
 else
   warn "empty diff against the default branch (nothing to deliver? or fetch origin first)" "diff-base"
+fi
+
+# ── evidence: is the claimed level EARNED, and is it even reachable here? ────
+# The mechanical half of the gate can only ever say "nothing I check is broken".
+# What the delivery actually CLAIMS lives in the claims ledger, and this is where the
+# two meet: required (from the blast radius) vs achieved (from commands that ran).
+#
+# Three outcomes, deliberately distinct — collapsing them is how gates get disabled:
+#   proven       — achieved ≥ required.
+#   unproven     — the evidence is missing, and could be produced here.
+#   cannot_prove — the evidence is IMPOSSIBLE on this machine (no runtime to drive).
+# Only the first two are the author's fault. Failing a delivery for the third would
+# fail every delivery on a laptop with no e2e setup, for a reason nobody can fix in
+# the diff — which is exactly how a gate earns an alias to `true`.
+PROOF_STATUS="unknown" ACHIEVED_LEVEL="" PROOF_MISSING=""
+_lvl_n() { case "$1" in E0) echo 0 ;; E1) echo 1 ;; E2) echo 2 ;; E3) echo 3 ;; E4) echo 4 ;; *) echo -1 ;; esac; }
+if [ "$DRY" != 1 ] && [ -z "$ONLY" ] && [ -f "$CLAIM_SH" ] && [ -n "$REQUIRED_LEVEL" ]; then
+  ACHIEVED_LEVEL="$(bash "$CLAIM_SH" achieved 2>/dev/null </dev/null || echo E0)"
+  req_n="$(_lvl_n "$REQUIRED_LEVEL")"; ach_n="$(_lvl_n "$ACHIEVED_LEVEL")"; max_n="$(_lvl_n "${MAX_LEVEL:-E4}")"
+  if [ "$ach_n" -ge "$req_n" ]; then
+    PROOF_STATUS="proven"
+    ok "proof-level: central claim at $ACHIEVED_LEVEL (this change requires $REQUIRED_LEVEL)" "proof-level"
+  elif [ "$max_n" -lt "$req_n" ]; then
+    PROOF_STATUS="cannot_prove"
+    PROOF_MISSING="$(pg_json "$IMPACT_JSON" '.degradations[0].detail' 2>/dev/null)"
+    PROOF_MISSING="${PROOF_MISSING:-no way to drive the real runtime from here}"
+    # A NOTE by default, not a warning — and the distinction is load-bearing. This is
+    # a fact about the machine, not a defect in the delivery: nothing the author can
+    # write in this diff makes an absent runtime appear. Emitting a warning would make
+    # `--strict` fail every delivery on every box without an e2e setup, which is not
+    # rigour, it is how a gate gets aliased to `true`. Repos that DO want it enforced
+    # set requireProof, and then it blocks with the capability named.
+    _msg="cannot-prove: this change requires $REQUIRED_LEVEL, but only $MAX_LEVEL is reachable here — $PROOF_MISSING. Add commands.e2e or smoke[] to proofgate.json, or say plainly in your status that the runtime claim is UNPROVEN."
+    if [ "$(cfg '.requireProof')" = "true" ]; then warn "$_msg" "proof-level"; else note "$_msg" "proof-level"; fi
+  else
+    PROOF_STATUS="unproven"
+    warn "proof-level: this change requires $REQUIRED_LEVEL, the ledger has $ACHIEVED_LEVEL. Record the run that proves it: claim.sh add --claim \"...\" --level $REQUIRED_LEVEL --run \"<cmd>\" --expect \"<marker unique to the new version>\"" "proof-level"
+  fi
+fi
+
+# ── ledgers: append-only, hash-chained ───────────────────────────────────────
+# Every row carries the hash of the row before it, so a line appended or edited by
+# hand — the agent writing its own evidence — breaks the chain. This is tamper-
+# EVIDENT, not tamper-proof: anything with a shell can recompute the whole chain.
+# What it removes is the cheap, deniable edit, and it makes the expensive one visible.
+CHAIN_OK=true
+if [ "$DRY" != 1 ] && [ -z "$ONLY" ] && command -v pg_ledger_verify >/dev/null 2>&1; then
+  for _led in proofgate-claims proofgate-hypotheses; do
+    _f="$(pg_git_dir)/$_led.jsonl"
+    [ -f "$_f" ] || continue
+    if ! _bad="$(pg_ledger_verify "$_f")"; then
+      CHAIN_OK=false
+      fail "ledger-chain: $_led.jsonl line $_bad does not follow the chain — a row was written or edited outside the tooling. Evidence that can be typed is not evidence." "ledger-chain"
+    fi
+  done
 fi
 
 # ── verdict ──────────────────────────────────────────────────────────────────
@@ -301,7 +448,23 @@ if [ "$DRY" != 1 ] && [ -z "$ONLY" ]; then
   GD="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
   SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
   TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
-  VERDICT="{\"schemaVersion\":1,\"sha\":\"$SHA\",\"generatedAt\":\"$TS\",\"flags\":{\"build\":$([ "$BUILD" = 1 ] && echo true || echo false),\"strict\":$([ "$STRICT" = 1 ] && echo true || echo false),\"smoke\":$([ "$SMOKE" = 1 ] && echo true || echo false)},\"checks\":[$CHECK_JSON],\"fails\":$FAILS,\"warns\":$WARNS,\"pass\":$PASS_BOOL}"
+  # ── verdict v2 ─────────────────────────────────────────────────────────────
+  # ADDITIVE by contract. Four readers parse this file with grep/sed and none of
+  # them can be upgraded in place: hooks/push-guard.sh, hooks/stop-guard.sh, the
+  # pre-push hook install.sh WROTE INTO USERS' REPOS (it never updates itself), and
+  # tests/run-tests.sh. They do:
+  #     sed -n 's/.*"sha":"\([0-9a-f]\{7,40\}\)".*/\1/p'      ← GREEDY: last match wins
+  #     grep -q '"pass":true'
+  # So v2 keeps the v1 prefix byte-identical through "pass", stays on ONE line, and
+  # contains exactly ONE "sha": and ONE "pass": in the whole document. Everything
+  # nested says head_sha / base_sha / sha_ok instead. A test pins this.
+  VERDICT="{\"schemaVersion\":2,\"sha\":\"$SHA\",\"generatedAt\":\"$TS\",\"flags\":{\"build\":$([ "$BUILD" = 1 ] && echo true || echo false),\"strict\":$([ "$STRICT" = 1 ] && echo true || echo false),\"smoke\":$([ "$SMOKE" = 1 ] && echo true || echo false)},\"checks\":[$CHECK_JSON],\"fails\":$FAILS,\"warns\":$WARNS,\"pass\":$PASS_BOOL"
+  VERDICT="$VERDICT,\"impact\":{\"risk_class\":\"${RISK:-unknown}\",\"navigation_backend\":\"${NAV_BACKEND:-none}\",\"navigation_confidence\":\"${NAV_CONF:-none}\",\"skeptic_required\":${SKEPTIC_REQ:-false}}"
+  VERDICT="$VERDICT,\"required_level\":\"${REQUIRED_LEVEL:-unknown}\",\"max_achievable_level\":\"${MAX_LEVEL:-unknown}\""
+  VERDICT="$VERDICT,\"degradations\":[$(printf '%s' "${IMPACT_DEGR:-}" | awk '{for(i=1;i<=NF;i++) printf "%s\"%s\"", (i>1?",":""), $i}')]"
+  PG_MODE=normal; [ -f "$(pg_git_dir)/proofgate-mode" ] && PG_MODE=prototype
+  VERDICT="$VERDICT,\"mode\":\"$PG_MODE\""
+  VERDICT="$VERDICT,\"achieved_level\":\"${ACHIEVED_LEVEL:-unknown}\",\"proof\":{\"status\":\"$PROOF_STATUS\",\"missing\":\"$(pg_json_escape "$PROOF_MISSING")\"},\"chain_ok\":$CHAIN_OK}"
   if [ -d "$GD" ]; then
     TMPV="$(mktemp "$GD/.proofgate-verdict.XXXXXX" 2>/dev/null || mktemp)"
     printf '%s\n' "$VERDICT" > "$TMPV" && mv "$TMPV" "$GD/proofgate-verdict.json"

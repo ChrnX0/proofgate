@@ -1,6 +1,20 @@
 {
   "$comment": "ProofGate gates itself. Its 'test suite' is the guard/engine/hook acceptance harness. The dev source teaches the sin patterns, so a few of its own files carry them by nature — the self-exclusion in lib.sh (PG_SELF_EXCLUDE) covers the gate's runtime files; the rest is content.",
   "commands": {
-    "test": "bash tests/run-tests.sh"
-  }
+    "test": "bash tests/run-tests.sh",
+    "$comment_e2e": "Its presence is what tells ProofGate that E3 is producible here. For a tool made of shell scripts and git, driving 'the real runtime' means a real repository with a real remote — which is exactly what tests/acceptance.sh does, end to end. The gate does not run it; it reads it as a capability.",
+    "e2e": "bash tests/acceptance.sh"
+  },
+
+  "$comment_sensitive": "This repo's own L3 list. The stock default would flag hooks/ and every guard that merely NAMES a credential shape, so the paths are narrowed to what is genuinely security-shaped here: nothing yet. Terms stay at the default — if a diff here starts moving money or checking permissions, that is worth an adversarial pass.",
+  "sensitiveGlobs": "(^|/)(auth|oauth|crypto)s?(/|[._-])",
+
+  "$comment_coupled": "The evidence hierarchy is DEFINED once in SKILL.md, but a subagent is loaded standalone and never sees the skill — so gate-skeptic.md carries a compressed mirror on purpose. A mirror that can drift silently is worse than a duplicate: this pins them to move together.",
+  "coupledFiles": [
+    {
+      "a": "skills/proofgate/SKILL.md",
+      "b": "agents/gate-skeptic.md",
+      "reason": "the E0–E4 hierarchy is mirrored into the subagent prompt, which cannot read the skill"
+    }
+  ]
 }
