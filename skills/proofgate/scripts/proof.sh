@@ -88,7 +88,7 @@ cmd_seal() {
   local claims="["
   if [ -f "$GD/proofgate-claims.jsonl" ]; then
     local cid; cid="$(pg_content_id)"
-    claims="$claims$(grep -e "\"sha\":\"$HEAD_SHA\"" -e "\"content\":\"$cid\"" "$GD/proofgate-claims.jsonl" 2>/dev/null | awk '{ printf "%s%s", (n++ ? "," : ""), $0 }')"
+    claims="$claims$(grep "\"content\":\"$cid\"" "$GD/proofgate-claims.jsonl" 2>/dev/null | awk '{ printf "%s%s", (n++ ? "," : ""), $0 }')"
   fi
   claims="$claims]"
 

@@ -38,6 +38,22 @@ moment they apply:
 - **The status is rendered, not written.** A block you compose by hand is E0 by
   construction, because nothing produced it.
 
+### The commands behind each phase
+
+| Command | Use it when |
+|---|---|
+| `/proofgate:preflight` | starting anything — measures the radius, recalls what the project knows about these files, opens the hypothesis |
+| `/proofgate:claim` | you have something to assert — it RUNS the command and records the exit code |
+| `/proofgate:experiment` | testing an idea — its own worktree, several at once, nothing left behind |
+| `/proofgate:gate` | before declaring done — radius → mechanical → skeptic panel → seal → render |
+| `/proofgate:report` | writing the status — it is generated, and a typed one is E0 |
+| `/proofgate:seal` | the evidence should travel with the commit |
+| `/proofgate:prototype` | exploring, and the full ceremony is genuinely the wrong price |
+| `/proofgate:calibration` | a guard feels like noise — see whether it has ever earned its keep |
+
+Vendored (`install.sh`) the same tools live in `.proofgate/`; in-repo they are under
+`skills/proofgate/scripts/`.
+
 ## The 5-step gate function (run it before ANY status claim)
 
 Before you type "done / fixed / it works / tests pass", run this in your head —

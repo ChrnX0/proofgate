@@ -58,6 +58,28 @@ The proof travels with the commit.
 
 ### Fixed
 
+- **A claim survived an uncommitted edit — in the display, at least.** Claims matched on
+  the HEAD sha *or* the content id, so after recording evidence and then editing a file
+  without committing, the gate still printed `✅ proof-level: central claim at E3` for a
+  run that happened against different code. Nothing false could ship — the `git-committed`
+  FAIL blocks the delivery in exactly that window — but "it fails for another reason
+  anyway" is not a defence for printing a green line that is not true, in the one place
+  whose entire job is not doing that. Found by running the gate on this very documentation
+  pass.
+
+  Matching on **content only** fixed the display and immediately broke something better:
+  the acceptance run went from 18/18 to 16/18. A **red test is evidence about the code
+  BEFORE the fix** — that is its entire purpose — so its content id can never match the
+  fixed tree, and the strict rule deleted the counter-proof from the delivery it proves.
+  Worse, `list` stopped showing the red row, leaving no id to pass to `--same-as`: the
+  red→green workflow the tool insists on became unperformable with the tool.
+
+  So the rule is exact rather than merely strict. A red row is admitted when a **current
+  green row references it** — the pair is admitted together or not at all. And `list`
+  became a browser that *labels* (`*` = still describes this code) instead of hiding,
+  because you cannot reference an id you cannot see. `achieved` and `render` stay strict;
+  they are what gates. Two more tests pin the pair rule and the labelling.
+
 - **`edit-notice` was silent on macOS.** A repo created under `mktemp -d` lives at
   `/var/folders/...` while `git rev-parse --show-toplevel` resolves the symlink to
   `/private/var/folders/...`, so stripping the root prefix from the edited file's path

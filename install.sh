@@ -155,5 +155,11 @@ EOF
 fi
 
 echo
-echo "Run it now:   bash .proofgate/verify.sh --dry-run"
-echo "Judgment gate: https://github.com/ChrnX0/proofgate#-what-proofgate-actually-is"
+echo "Run it now:      bash .proofgate/verify.sh --dry-run"
+echo "Before you code: bash .proofgate/impact.sh --json   (what can this change break?)"
+echo "Record evidence: bash .proofgate/claim.sh add --claim \"...\" --level E3 --run \"<cmd>\" --expect \"<marker>\""
+echo "Your status:     bash .proofgate/claim.sh render    (generated — a typed one is E0)"
+echo
+echo "Everything past the mechanical gate is OPT-IN and off by default:"
+echo "  editGuard · liveGuards · audit · requireProof · requireSkeptic · stopGuard"
+echo "Full reference: https://github.com/ChrnX0/proofgate#%EF%B8%8F-configuration-optional"

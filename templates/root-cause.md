@@ -26,6 +26,23 @@ Proof of layer: <stack trace line / log source / repro isolating the layer>
 
 ### 3b. The hypothesis, made falsifiable
 
+> Record it rather than only writing it here — a refutation that lives in a document is
+> the first thing a context compaction drops, and the dead explanation comes back more
+> convincing the second time:
+>
+> ```sh
+> hypothesis.sh open --kind bugfix --symptom "<short stable tag>" \
+>   --hypothesis "<the mechanism, one sentence>" \
+>   --prediction  "<what MUST exist if that is true>" \
+>   --cmd         "<the command that reveals that mark>"
+> hypothesis.sh refute <id> --run "<cmd>"     # silence is recorded as "the mark is ABSENT"
+> ```
+>
+> Two refuted explanations for the same `--symptom` escalate the third: the gate then
+> demands an adversarial pass, because the third guess about a stubborn symptom is
+> exactly where an invented culprit gets written down and hardens into folklore.
+
+
 Observing an EFFECT is not identifying an AGENT. Before this cause goes anywhere
 durable, state what would have to be true — then go look.
 

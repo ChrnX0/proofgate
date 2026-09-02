@@ -1163,9 +1163,49 @@ CID="$(mktemp -d)"
 ok_t "$([ -n "$( cd "$CID" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null )" ] && echo 1 || echo 0)" \
      "claims: evidence survives the commit that packages the same code"
 ( cd "$CID" && echo 'c' > src/f.ts ) >/dev/null 2>&1
-ok_t "$([ -z "$( cd "$CID" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null )" ] && echo 1 || echo 0)" \
+# `list` is a browser: it keeps showing the row and LABELS it, because hiding it leaves
+# no id to pass to `--same-as`. `achieved` is the strict one — it is what gates.
+ok_t "$([ "$( cd "$CID" && PROOFGATE_LIB="$LIB" bash "$CLAIM" achieved </dev/null 2>/dev/null )" = E0 ] && echo 1 || echo 0)" \
      "claims: evidence does NOT survive a real change to the code (negative)"
+ok_t "$(printf '%s' "$( cd "$CID" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null )" | grep -q '^ c-' && echo 1 || echo 0)" \
+     "claims: list still shows the row, unmarked — hiding it would strand --same-as"
 rm -rf "$CID"
+
+# ...and it must not survive an UNCOMMITTED change either. Matching on the HEAD sha as
+# well as the content meant that editing a file without committing left the gate printing
+# `✅ proof-level: central claim at E3` for evidence that ran against other code. The
+# git-committed FAIL blocked the delivery in that window regardless — but "it fails for
+# another reason anyway" does not license printing a green line that is not true.
+CID2="$(mktemp -d)"
+( cd "$CID2" && git init -q -b main && git config user.email t@t && git config user.name t
+  mkdir -p src && echo 'a' > src/f.ts && git add -A && git commit -qm base
+  PROOFGATE_LIB="$LIB" bash "$CLAIM" add --claim "a is there" --level E2 --run "cat src/f.ts | grep -q a" ) >/dev/null 2>&1
+ok_t "$(printf '%s' "$( cd "$CID2" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null )" | grep -q '^\*c-' && echo 1 || echo 0)" \
+     "claims: marked current on the code they were recorded against"
+( cd "$CID2" && echo 'b' > src/f.ts ) >/dev/null 2>&1   # edited, NOT committed
+ok_t "$(printf '%s' "$( cd "$CID2" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null )" | grep -q '^ c-' && echo 1 || echo 0)" \
+     "claims: an UNCOMMITTED edit un-marks them too (negative)"
+ok_t "$([ "$( cd "$CID2" && PROOFGATE_LIB="$LIB" bash "$CLAIM" achieved </dev/null 2>/dev/null )" = E0 ] && echo 1 || echo 0)" \
+     "claims: achieved level drops to E0 with the tree dirty"
+rm -rf "$CID2"
+
+# A red test is evidence about the code BEFORE the fix — its content id can never match
+# the fixed tree. Filtering purely on content deleted the counter-proof from the very
+# delivery it proves. A red row is admitted when a CURRENT green row points back to it.
+CID3="$(mktemp -d)"
+( cd "$CID3" && git init -q -b main && git config user.email t@t && git config user.name t
+  mkdir -p src && echo 'buggy' > src/f.ts
+  printf '#!/bin/sh\ngrep -q fixed src/f.ts\n' > t.sh && chmod +x t.sh
+  git add -A && git commit -qm base
+  PROOFGATE_LIB="$LIB" bash "$CLAIM" add --kind red-test --run "sh t.sh" ) >/dev/null 2>&1
+RID3="$( cd "$CID3" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null | grep red-test | sed 's/^.//' | awk '{print $1}' | head -1 )"
+( cd "$CID3" && echo 'fixed' > src/f.ts
+  PROOFGATE_LIB="$LIB" bash "$CLAIM" add --kind green-test --same-as "$RID3" --run "sh t.sh" ) >/dev/null 2>&1
+RND3="$( cd "$CID3" && PROOFGATE_LIB="$LIB" bash "$CLAIM" render </dev/null 2>/dev/null )"
+ok_t "$(printf '%s' "$RND3" | grep -q 'green-test' && echo 1 || echo 0)" "claims: the green test is in the status"
+ok_t "$(printf '%s' "$RND3" | grep -q 'red-test' && echo 1 || echo 0)" \
+     "claims: the red test it references comes with it, though it describes older code"
+rm -rf "$CID3"
 
 echo "══ audit-hook: a chronology, never evidence ════════════════"
 AU="$(mktemp -d)"

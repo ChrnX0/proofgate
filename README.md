@@ -61,8 +61,8 @@ A **delivery gate** that sits between *"the code is written"* and *"the work is 
 |---|---|---|
 | **0 · Blast radius** | what this diff can break — changed symbols, their callers, affected tests — over the **whole branch + your working tree**, classified **L1/L2/L3**. That class sets the price of the gate: docs pay E1, source pays E3, auth/money/migrations also pay a mandatory skeptic | a script — `impact.sh` |
 | **1 · Mechanical** | tests · lint · push state · **23 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, version-bumped-but-never-released, …) → a **SHA-bound verdict** | a script — `verify.sh` |
-| **2 · Judgment** | root cause + counter-proof · an **evidence hierarchy** (believed → static → tested → exercised → in-prod; "done" needs ≥ exercised) · **diagnosis as a falsifiable hypothesis** · brutally honest status | you (or your agent), **in writing** |
-| **3 · Adversarial** | a **default-refute skeptic** tries to break every "it works" claim against the diff | the `gate-skeptic` subagent |
+| **2 · Judgment** | root cause + counter-proof · an **evidence hierarchy** (believed → static → tested → exercised → in-prod; "done" needs ≥ exercised) · **diagnosis as a falsifiable hypothesis that survives a context compaction** · a status **generated from the ledger, never typed** | `claim.sh` · `hypothesis.sh` · `memory.sh` |
+| **3 · Adversarial** | a **default-refute panel**, sized to the radius, tries to break every "it works" claim — and every refutation is itself re-run, so a skeptic cannot assert a break either | `gate-skeptic` · `intent-skeptic` · `security-skeptic` |
 | **4 · Enforcement** | hooks refuse to `git push` — or (opt-in) to declare *done* — without a fresh passing verdict, and (opt-in) to edit source while a bugfix has no failing test | `push-guard` · `stop-guard` · `edit-guard` |
 | **5 · Proof** | the verdict, radius, claims and skeptic record **sealed to the commit** as a git note that travels with the push and CI verifies | `proof.sh seal` |
 
@@ -83,24 +83,51 @@ ProofGate ships as a **Claude Code plugin**. Two commands:
 /plugin install proofgate@proofgate
 ```
 
-Your agent gains:
-- the **`proofgate` skill** — runs the mechanical gate and walks the judgment gate before declaring anything done;
-- **`/proofgate:gate`** — the full ritual on demand;
-- the **`gate-skeptic`** subagent — an adversarial pass over its own claims;
-- the **push-guard** hook — no push without a fresh passing verdict (and `stopGuard:true` extends that to "no *done* without one").
+Your agent gains a **protocol**, not just a checkpoint —
+RECALL → HYPOTHESIZE → EXPERIMENT → IMPLEMENT → PROVE → SEAL → REPORT, each phase
+anchored by a command or a hook rather than a reminder:
 
-The payoff is an **Evidence Report** instead of a vibe — with the evidence *level* stated:
+| | |
+|---|---|
+| **`proofgate` skill** | the protocol itself; invoked before anything is called done |
+| **`/proofgate:preflight`** | measure the radius, recall what the project knows, name the E3 observation, open a falsifiable hypothesis — all things that are impossible or dishonest to do afterwards |
+| **`/proofgate:claim`** | record a claim by RUNNING the command that proves it |
+| **`/proofgate:experiment`** | test an idea in its own worktree, several at once, leaving nothing behind |
+| **`/proofgate:gate`** | the full ritual: radius → mechanical → skeptic panel → seal → render |
+| **`/proofgate:report`** | the status block, generated from the ledger |
+| **`/proofgate:seal`** | attach the evidence to the commit as a git note |
+| **`/proofgate:prototype`** · **`/proofgate:calibration`** | explore loudly; see which guards earn their noise |
+| **3 skeptic subagents** | correctness, scope, and security — launched in proportion to the risk class |
+| **7 hooks** | refuse an unproven push; refuse "done"; refuse a fix with no failing test; re-inject what a compaction dropped; report a guard finding at the moment of the edit; announce prototype mode every turn; keep a command chronology |
+
+The payoff is an **Evidence Report** instead of a vibe — and the important part is that
+**the agent does not write it**. It is rendered from rows that each name a command that
+ran, its exit code and a hash of its output:
+
+```sh
+/proofgate:report
+```
 
 ```
 PROOFGATE — checkout flow fix
-Mechanical: ✅ typecheck ✅ lint ✅ tests ✅ committed ✅ guards (23)
-VERIFIED (E4): POST /api/orders returns 201 in prod — curl output attached
-NOT TESTED: Safari < 16 — no device; will verify via BrowserStack by Fri
-Root cause: race in cart mutex — Sentry #4821, repro pinned; counter-proof checked
-Lesson recorded: regression test tests/cart-race.test.ts
+Mechanical: ✅ passed · 1 warning(s) · verdict for a1b2c3d
+Blast radius: L3 · needs E3 · reachable here: E4 · nav ctags (high)
+VERIFIED (level · evidence):
+  E2 [red-test]   the bug reproduces: this command is RED before the fix
+       ↳ npx vitest run src/cart.test.ts → exit 1
+  E2 [green-test] the same command that was red now passes
+       ↳ npx vitest run src/cart.test.ts → exit 0
+  E4 [central]    checkout completes against production
+       ↳ curl -s https://app.example.com/version → exit 0 · matched /"build":"a1b2c3d"/
+NOT TESTED (declared):
+  · Safari < 16 — no device; BrowserStack run scheduled Friday
+STATUS: central claim at E4 (required E3)
 ```
 
-That `VERIFIED (E4)` and that honest `NOT TESTED`, **written by the agent itself before you had to ask** — that's the culture shift.
+That `E4` was not typed. `claim.sh` ran `curl`, read the exit code, and checked for a
+marker **unique to the new build** — because a `200` is perfectly compatible with the old
+one still being live. **A status composed by hand is E0 by construction**: nothing
+produced it. That is the culture shift, and it is now a mechanism rather than a habit.
 
 ## 🏗️ Run it in CI
 
@@ -119,7 +146,13 @@ jobs:
           strict: "false"   # start soft; flip to "true" when the team is ready
 ```
 
-It writes `::error`/`::warning` annotations, a step-summary table, and outputs (`fails`, `warns`, `verdict-path`). Or `bash install.sh --ci` scaffolds it. Same gate everywhere: agent, laptop, CI.
+It writes `::error`/`::warning` annotations, a step-summary table, and outputs (`fails`, `warns`, `verdict-path`, `proof`). Or `bash install.sh --ci` scaffolds it. Same gate everywhere: agent, laptop, CI.
+
+The job also **verifies the sealed proof note** on the branch head and renders it into the
+step summary. A *missing* note does not fail the build — a team adopting this has commits
+from before they started sealing, and failing those teaches everyone the check is noise.
+A **tampered** one does, because that is a positive signal rather than an absence. Set
+`require-proof-note: "true"` when every commit is expected to carry one.
 
 ## 🧩 The judgment gate (layer 2)
 
@@ -173,8 +206,16 @@ Every automated check is a small script in [`guards.d/`](skills/proofgate/script
 | `75-machine-paths` | `/home/<you>` / `C:\Users\…` hard-coded | ⚠️ |
 | `85-float-money` | money through a float (`parseFloat`, `.toFixed`) | ⚠️ |
 | `90-sql-concat` | SQL built by string concatenation | ⚠️ |
+| `93-hypothesis-required` | a fix branch with no recorded hypothesis — a cause never written down is never falsified | ⚠️ |
+| `95-schema-constraint-no-migration` | a constraint added to a table with no migration for it | ⚠️ |
+| `96-version-bump-no-release` | the version moved and no release was ever cut | ⚠️ |
+| `97-memory-stale` | a recorded fact is anchored to a file in this diff, and the anchor no longer matches | ⚠️ |
+| `98-unlearned-lessons` | an incident with nothing enforcing its lesson yet | ⚠️ |
+| `99-skeptic-required` | an L3 change with no adversarial pass — or one whose refutations still reproduce | ⚠️ / ❌ |
 
-**Every guard is proven on both paths** — fires on the sin, stays quiet on a clean diff — by [`tests/run-tests.sh`](tests/run-tests.sh) (**61 cases**, engine + hooks included), on every push, on Linux **and** macOS, in [this repo's own CI](https://github.com/ChrnX0/proofgate/actions). The acceptance gate has its own acceptance tests.
+**Every guard is proven on both paths** — fires on the sin, stays quiet on a clean diff — by [`tests/run-tests.sh`](tests/run-tests.sh) (**246 cases**, engine, hooks, ledgers and scripts included), on every push, on Linux **and** macOS, in [this repo's own CI](https://github.com/ChrnX0/proofgate/actions).
+
+On top of that, [`tests/acceptance.sh`](tests/acceptance.sh) drives **the whole protocol end to end in a real repository with a real remote** — 18 steps, from measuring the radius to detecting a tampered proof note. That distinction is not ceremony: it caught three defects the unit suite could not see — including one introduced by a fix that every unit test approved. Every piece obeying its spec is not the same as the path through them working — which is, more or less, this entire project's thesis applied to itself.
 
 False positive? Three escape hatches: a `proofgate-allow` comment on the line, a `guard:file:hash` fingerprint in `.proofgateignore`, or `skip`/`severity` in `proofgate.json`. When production burns you in a way a script could have caught: copy [`TEMPLATE.sh.example`](skills/proofgate/scripts/guards.d/TEMPLATE.sh.example), drop a file, done. **Today's pain becomes tomorrow's tooling — permanently.**
 
@@ -195,10 +236,24 @@ False positive? Three escape hatches: a `proofgate-allow` comment on the line, a
   "severity": { "pii-logging": "fail" },
   "guardsDirs": [".proofgate-guards"],
   "smoke": [{ "name": "health", "url": "https://app.example.com/health", "status": 200, "expect": "ok" }],
+
   "pushGuard": true,
-  "stopGuard": false
+  "stopGuard": false,
+  "editGuard": false,
+  "liveGuards": false,
+  "audit": false,
+  "requireProof": false,
+  "requireSkeptic": false,
+  "memory": { "ttlDiffs": 20, "agentDecisionsExpire": true },
+  "hypothesis": { "branchPattern": "(^|/)(fix|bugfix|hotfix|patch)", "strikeThreshold": 2 },
+  "experiment": { "link": ["node_modules", ".venv", "target"], "timeoutSeconds": 900 }
 }
 ```
+
+**Everything added after 2.6 is opt-in and off by default** — `editGuard`, `liveGuards`,
+`audit`, `requireProof`, `requireSkeptic`. That is deliberate: the intrusive rules are the
+ones a team must choose, because a rule imposed on a team that has not chosen it is a rule
+they route around, and the routing-around generalises to the rules that mattered.
 
 Config reads with jq, node, **or** python3 — whichever exists (zero hard dependency). Flags: `--build` · `--strict` · `--smoke` · `--json` · `--only <guard>` · `--dry-run` · `--base <ref>` · `--report <file>` · `--no-impact`. `--only` searches the engine's guards **and** your `guardsDirs`, so you can iterate on a guard you just wrote without paying for a full run.
 
@@ -277,13 +332,13 @@ The guard design rule is *low false-positive above all* (see [CONTRIBUTING](CONT
 
 ## 🗺️ Roadmap
 
+- A reference `impact.backendCmd` implementation — real LSP go-to-definition instead of ctags/grep, so `navigation_confidence` can be `high` on every stack rather than the ones ctags parses
 - Per-workspace monorepo awareness (changed packages only)
-- A reference `impact.backendCmd` implementation (real LSP go-to-definition instead of ctags/grep)
 - Cross-repo memory: an incident recorded in one service warning the next one that touches the same shape
 - Entropy-based secret detection
 - SARIF / rdjson export for code-scanning ingestion
-- Cross-model skeptic (a second model as independent auditor)
-- Gate-result history: is your team's evidence discipline trending up? (the `.git/proofgate-ledger.jsonl` groundwork is in place)
+- **Cross-model skeptic** — the panel is adversarial but shares one model's blind spots; a second model as independent auditor is the honest next step
+- Gate-result history: is your team's evidence discipline trending up? (`verify.sh --calibration` is the first slice of this; the ledgers hold the rest)
 
 **Contributing:** the best PR is a [new guard with a scar behind it](CONTRIBUTING.md). Tell us what shipped broken the day it became a rule.
 
@@ -295,7 +350,7 @@ The guard design rule is *low false-positive above all* (see [CONTRIBUTING](CONT
 
 <div align="center">
 
-**ProofGate** — *four layers, one verdict, zero excuses.*
+**ProofGate** — *six layers, one verdict, zero excuses.*
 
 *If it saved you one 2 a.m. rollback, star the repo so it can save someone else's.* ⭐
 

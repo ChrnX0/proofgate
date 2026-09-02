@@ -205,8 +205,31 @@ rows_for_sha() {
   local sha="${1:-$HEAD_SHA}" cid
   [ -f "$LEDGER" ] || return 0
   if [ "$sha" = "$HEAD_SHA" ]; then
+    # CONTENT only, deliberately — not "sha OR content". Matching on the sha as well
+    # meant that after recording a claim and then editing a file WITHOUT committing, the
+    # gate still printed `✅ proof-level: central claim at E3` — for evidence that ran
+    # against different code. The `git-committed` FAIL blocks the delivery in that window
+    # regardless, so nothing false could ship; but a green line about a claim that no
+    # longer holds is precisely the confusion this tool exists to remove, and "the gate
+    # fails for another reason anyway" is not a defence for printing it.
+    #
+    # Content alone is also simply the right rule. It covers the natural order of work
+    # (prove it, then commit it — the bytes are the same), and it dies the moment the
+    # code moves, which is the SKILL's "green WHEN?".
     cid="$(pg_content_id)"
-    grep -e "\"sha\":\"$sha\"" -e "\"content\":\"$cid\"" "$LEDGER" 2>/dev/null
+    # Content-current rows, PLUS the red test that a current green test points back to.
+    # A red-test claim is evidence about the code BEFORE the fix — that is its entire
+    # purpose — so its content id can never match the fixed tree. Filtering purely on
+    # content therefore deleted the counter-proof from the delivery it proves, and broke
+    # the red→green workflow outright: `list` stopped showing the red row, so there was
+    # no id left to pass to `--same-as`.
+    #
+    # A red row earns its place by being REFERENCED by a green row that is current. That
+    # is exact rather than lenient: the pair is admitted together or not at all.
+    local rows; rows="$(grep "\"content\":\"$cid\"" "$LEDGER" 2>/dev/null)"
+    local refs; refs="$(printf '%s' "$rows" | grep -o '"same_as":"[^"]*"' | sed -e 's/^"same_as":"//' -e 's/"$//' | grep -v '^$' || true)"
+    printf '%s\n' "$rows"
+    for r in $refs; do grep "\"id\":\"$r\"" "$LEDGER" 2>/dev/null; done
   else
     grep "\"sha\":\"$sha\"" "$LEDGER" 2>/dev/null
   fi
@@ -221,9 +244,16 @@ cmd_list() {
     printf '['; rows_for_sha "$sha" | awk '{ printf "%s%s", (n++ ? "," : ""), $0 }'; printf ']\n'
     return 0
   fi
-  rows_for_sha "$sha" | while IFS= read -r r; do
-    printf '%s  %-11s %-3s  %s\n' "$(field "$r" id)" "$(field "$r" kind)" "$(field "$r" level_recorded)" "$(field "$r" claim)"
+  # Browsing shows everything recent and LABELS what no longer describes this code —
+  # hiding it would leave no id to pass to `--same-as`. `achieved` and `render` are the
+  # strict ones; this is the one you read with your eyes.
+  local cid; cid="$(pg_content_id)"
+  tail -30 "$LEDGER" 2>/dev/null | while IFS= read -r r; do
+    local mark=" "
+    case "$r" in *"\"content\":\"$cid\""*) mark="*" ;; esac
+    printf '%s%s %-11s %-3s  %s\n' "$mark" "$(field "$r" id)" "$(field "$r" kind)" "$(field "$r" level_recorded)" "$(field "$r" claim)"
   done
+  echo "  (* = still describes the code as it is now; unmarked rows were recorded against other code)"
 }
 
 # The highest level actually EARNED by a central claim on this commit. verify.sh reads

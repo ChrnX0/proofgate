@@ -1,6 +1,6 @@
 {
   "name": "proofgate",
-  "description": "The acceptance gate that doesn't accept 'I think it works.' A four-layer delivery gate for AI-assisted development: mechanical checks (tests, secrets, PII, 23 diff guards) with a blast-radius measurement and a SHA-bound verdict, a judgment checklist with an evidence hierarchy, an adversarial skeptic pass, and hooks that refuse to push or declare 'done' without a fresh passing verdict.",
+  "description": "The acceptance gate that doesn't accept 'I think it works.' It measures what a change can break and charges evidence in proportion: docs pay a typecheck, source pays a real end-to-end run, auth/money/migrations pay that plus a mandatory adversarial pass. Claims are recorded by RUNNING the command that proves them, so an evidence level cannot be typed; hypotheses and their refutations survive a context compaction; project memory is anchored to code so stale facts announce themselves; the status block is generated from the ledger, never written; and the whole bundle is sealed to the commit as a git note a reviewer can verify. 23 diff guards, a SHA-bound verdict, and hooks that refuse an unproven push.",
   "version": "3.0.0",
   "author": {
     "name": "Paulo Eduardo",
@@ -9,8 +9,33 @@
   "homepage": "https://github.com/ChrnX0/proofgate",
   "repository": "https://github.com/ChrnX0/proofgate",
   "license": "MIT",
-  "keywords": ["quality-gate", "verification", "ai-agents", "definition-of-done", "code-review", "evidence", "hooks", "guardrails"],
-  "commands": ["./commands/gate.md", "./commands/claim.md", "./commands/report.md", "./commands/preflight.md", "./commands/experiment.md", "./commands/prototype.md", "./commands/calibration.md", "./commands/seal.md"],
-  "agents": ["./agents/gate-skeptic.md", "./agents/intent-skeptic.md", "./agents/security-skeptic.md"],
+  "keywords": [
+    "quality-gate",
+    "verification",
+    "ai-agents",
+    "definition-of-done",
+    "code-review",
+    "evidence",
+    "hooks",
+    "guardrails",
+    "blast-radius",
+    "provenance",
+    "test-driven"
+  ],
+  "commands": [
+    "./commands/gate.md",
+    "./commands/claim.md",
+    "./commands/report.md",
+    "./commands/preflight.md",
+    "./commands/experiment.md",
+    "./commands/prototype.md",
+    "./commands/calibration.md",
+    "./commands/seal.md"
+  ],
+  "agents": [
+    "./agents/gate-skeptic.md",
+    "./agents/intent-skeptic.md",
+    "./agents/security-skeptic.md"
+  ],
   "hooks": "./hooks/hooks.json"
 }
