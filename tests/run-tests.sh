@@ -442,6 +442,86 @@ if grep -q '"navigation_backend":"grep"' "$tmpc/.git/proofgate-impact.json" 2>/d
 else echo "FAIL  impact: degradation not declared"; FAIL=$((FAIL + 1)); fi
 rm -rf "$tmpc" "$fakebin"
 
+echo "══ claims: evidence as a record, not as prose ══════════════"
+CLAIM="$ROOT/skills/proofgate/scripts/claim.sh"
+# A tiny helper: run claim.sh inside a throwaway repo, assert exit + output.
+cl_case() { # cl_case <name> <expected-exit> <expect-substr|-> <claim-args...>
+  local nome="$1" esperado="$2" substr="$3"; shift 3
+  local tmp code=0 out; tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t \
+      && echo one > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
+  out="$(cd "$tmp" && PROOFGATE_LIB="$LIB" bash "$CLAIM" "$@" </dev/null 2>&1)" || code=$?
+  local ok=1
+  [ "$code" = "$esperado" ] || ok=0
+  [ "$substr" != "-" ] && { printf '%s' "$out" | grep -q "$substr" || ok=0; }
+  if [ "$ok" = 1 ]; then echo "PASS  $nome (exit $code)"; PASS=$((PASS + 1))
+  else echo "FAIL  $nome — expected exit $esperado, got $code out=[$out]"; FAIL=$((FAIL + 1)); fi
+  rm -rf "$tmp"
+}
+
+# The refusals. Each one closes a way to record a level nothing supports.
+cl_case "claim: --run true → refused"            2 "cannot fail" add --claim c --level E2 --run "true"
+cl_case "claim: 'cmd || true' → refused"         2 "cannot fail" add --claim c --level E2 --run "grep x a.txt || true"
+cl_case "claim: 'cmd ; exit 0' → refused"        2 "cannot fail" add --claim c --level E2 --run "grep x a.txt ; exit 0"
+cl_case "claim: a real pipeline is NOT a no-op"  0 "recorded at E2" add --claim c --level E2 --run "cat a.txt | grep -q one"
+cl_case "claim: E1 with no evidence → refused"   2 "needs evidence" add --claim c --level E1
+cl_case "claim: E3 without --expect → refused"   2 "UNIQUE TO THE NEW" add --claim c --level E3 --run "cat a.txt"
+cl_case "claim: E0 needs nothing"                0 "recorded at E0" add --kind gap --claim "the retry path is untested"
+cl_case "claim: red test that PASSES → refused"  2 "must be RED" add --kind red-test --run "grep -q one a.txt"
+cl_case "claim: red test that fails → recorded"  0 "recorded at E2" add --kind red-test --run "grep -q ZZZ a.txt"
+cl_case "claim: green without --same-as → refused" 2 "same-as" add --kind green-test --run "grep -q one a.txt"
+cl_case "claim: unknown --kind → refused"        2 "unknown --kind" add --kind vibes --claim c --level E2 --run "cat a.txt"
+
+# A failed run and an unmatched marker still WRITE the row — at E0, with the reason.
+# Silently dropping them is how "not verified" becomes indistinguishable from "fine".
+cl_case "claim: failing command → recorded at E0" 0 "recorded at E0" add --claim c --level E2 --run "grep -q ZZZ a.txt"
+cl_case "claim: unmatched --expect → E0 + reason" 0 "expect-unmatched" add --claim c --level E3 --run "cat a.txt" --expect "NEWSHA"
+
+# The pair. A green test must re-run the command that was red — a different command
+# passing proves a different thing.
+tmpg="$(mktemp -d)"
+( cd "$tmpg" && git init -q -b main && git config user.email t@t && git config user.name t
+  echo one > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
+RID="$( cd "$tmpg" && PROOFGATE_LIB="$LIB" bash "$CLAIM" add --kind red-test --run "grep -q ZZZ a.txt" </dev/null 2>/dev/null | awk '{print $2}')"
+c1=0; ( cd "$tmpg" && PROOFGATE_LIB="$LIB" bash "$CLAIM" add --kind green-test --same-as "$RID" --run "grep -q QQQ a.txt" </dev/null ) >/dev/null 2>&1 || c1=$?
+( cd "$tmpg" && echo ZZZ >> a.txt )
+c2=0; ( cd "$tmpg" && PROOFGATE_LIB="$LIB" bash "$CLAIM" add --kind green-test --same-as "$RID" --run "grep -q ZZZ a.txt" </dev/null ) >/dev/null 2>&1 || c2=$?
+if [ "$c1" = 2 ] && [ "$c2" = 0 ]; then echo "PASS  claim: green must re-run the SAME command"; PASS=$((PASS + 1))
+else echo "FAIL  claim: green/red pairing (different-cmd=$c1 same-cmd=$c2)"; FAIL=$((FAIL + 1)); fi
+# render is GENERATED: the ledger's content must appear in it, and a bare status cannot.
+ROUT="$( cd "$tmpg" && PROOFGATE_LIB="$LIB" bash "$CLAIM" render </dev/null 2>&1 )"
+if printf '%s' "$ROUT" | grep -q "grep -q ZZZ a.txt" && printf '%s' "$ROUT" | grep -q "STATUS:"; then
+  echo "PASS  claim: render quotes the command that ran"; PASS=$((PASS + 1))
+else echo "FAIL  claim: render did not include the evidence [$ROUT]"; FAIL=$((FAIL + 1)); fi
+rm -rf "$tmpg"
+
+# An empty ledger renders as NOTHING — not as a tidy-looking block.
+tmpe="$(mktemp -d)"
+( cd "$tmpe" && git init -q -b main && git config user.email t@t && git config user.name t
+  echo one > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
+if ( cd "$tmpe" && PROOFGATE_LIB="$LIB" bash "$CLAIM" render </dev/null 2>&1 ) | grep -q "VERIFIED: NOTHING"; then
+  echo "PASS  claim: no claims → render says NOTHING"; PASS=$((PASS + 1))
+else echo "FAIL  claim: empty ledger did not render as NOTHING"; FAIL=$((FAIL + 1)); fi
+rm -rf "$tmpe"
+
+# ── the engine side: required vs achieved, and the three proof states ────────
+setup_proofable() { mkdir -p src; echo 'export const x=1;' > src/a.ts
+                    printf '{"commands":{"typecheck":"true","test":"true","lint":"true","e2e":"true"}}\n' > proofgate.json; }
+a_cannot_prove()  { grep -q '"status":"cannot_prove"' "$(git rev-parse --git-dir)/proofgate-verdict.json"; }
+a_unproven()      { grep -q '"status":"unproven"' "$(git rev-parse --git-dir)/proofgate-verdict.json"; }
+a_chain_ok()      { grep -q '"chain_ok":true' "$(git rev-parse --git-dir)/proofgate-verdict.json"; }
+caso_verify "engine: L2 with no runtime → cannot_prove, not a failure" 0 setup_clean a_cannot_prove
+caso_verify "engine: L2 with e2e configured but no claim → unproven"   0 setup_proofable a_unproven
+caso_verify "engine: --strict still passes when evidence is unreachable" 0 setup_clean a_true --strict
+caso_verify "engine: clean ledger → chain_ok"                          0 setup_clean a_chain_ok
+
+# A row appended by hand — the agent writing its own evidence — breaks the chain.
+setup_forged() { mkdir -p src; echo 'export const x=1;' > src/a.ts
+                 mkdir -p .git
+                 printf '{"id":"c-forged","sha":"%s","kind":"central","level_recorded":"E4","prev":"deadbeef"}\n' "$(git rev-parse HEAD 2>/dev/null || echo x)" > .git/proofgate-claims.jsonl; }
+a_chain_fail() { grep -q "ledger-chain" /tmp/pg-cv.out; }
+caso_verify "engine: forged ledger row → ledger-chain FAIL" 1 setup_forged a_chain_fail
+
 echo "══ hooks ═══════════════════════════════════════════════════"
 optin()   { printf '{"pushGuard":true}\n' > proofgate.json; mkdir -p .proofgate && cp "$LIB" .proofgate/lib.sh; }
 optin_stop(){ printf '{"pushGuard":true,"stopGuard":true}\n' > proofgate.json; mkdir -p .proofgate && cp "$LIB" .proofgate/lib.sh; }

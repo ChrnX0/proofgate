@@ -50,6 +50,9 @@
     { "name": "authed-flow", "cmd": "bash scripts/smoke-authed.sh" }
   ],
 
+  "$comment_proof": "requireProof (opt-in, default false) makes the push-guard and stop-guard wait for EVIDENCE, not just a green mechanical gate: the claims ledger must carry a central claim at the level the blast radius demands. Leave it off until the team is recording claims — a gate that blocks on something nobody is producing yet gets bypassed, and bypass culture is worse than no gate.",
+  "requireProof": false,
+
   "$comment_hooks": "The plugin's push-guard (PreToolUse) refuses `git push` without a fresh passing verdict; set pushGuard:false to disable. stopGuard (opt-in, default off) makes the Stop hook refuse 'done' without one.",
   "pushGuard": true,
   "stopGuard": false

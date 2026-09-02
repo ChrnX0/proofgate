@@ -49,6 +49,7 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || exit 1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS_DIR="$SCRIPT_DIR/guards.d"
 IMPACT_SH="$SCRIPT_DIR/impact.sh"
+CLAIM_SH="$SCRIPT_DIR/claim.sh"
 CFG="proofgate.json"
 export PROOFGATE_CFG="$CFG" PROOFGATE_LIB="$SCRIPT_DIR/lib.sh"
 # shellcheck source=/dev/null
@@ -332,6 +333,61 @@ else
   warn "empty diff against the default branch (nothing to deliver? or fetch origin first)" "diff-base"
 fi
 
+# ── evidence: is the claimed level EARNED, and is it even reachable here? ────
+# The mechanical half of the gate can only ever say "nothing I check is broken".
+# What the delivery actually CLAIMS lives in the claims ledger, and this is where the
+# two meet: required (from the blast radius) vs achieved (from commands that ran).
+#
+# Three outcomes, deliberately distinct — collapsing them is how gates get disabled:
+#   proven       — achieved ≥ required.
+#   unproven     — the evidence is missing, and could be produced here.
+#   cannot_prove — the evidence is IMPOSSIBLE on this machine (no runtime to drive).
+# Only the first two are the author's fault. Failing a delivery for the third would
+# fail every delivery on a laptop with no e2e setup, for a reason nobody can fix in
+# the diff — which is exactly how a gate earns an alias to `true`.
+PROOF_STATUS="unknown" ACHIEVED_LEVEL="" PROOF_MISSING=""
+_lvl_n() { case "$1" in E0) echo 0 ;; E1) echo 1 ;; E2) echo 2 ;; E3) echo 3 ;; E4) echo 4 ;; *) echo -1 ;; esac; }
+if [ "$DRY" != 1 ] && [ -z "$ONLY" ] && [ -f "$CLAIM_SH" ] && [ -n "$REQUIRED_LEVEL" ]; then
+  ACHIEVED_LEVEL="$(bash "$CLAIM_SH" achieved 2>/dev/null </dev/null || echo E0)"
+  req_n="$(_lvl_n "$REQUIRED_LEVEL")"; ach_n="$(_lvl_n "$ACHIEVED_LEVEL")"; max_n="$(_lvl_n "${MAX_LEVEL:-E4}")"
+  if [ "$ach_n" -ge "$req_n" ]; then
+    PROOF_STATUS="proven"
+    ok "proof-level: central claim at $ACHIEVED_LEVEL (this change requires $REQUIRED_LEVEL)" "proof-level"
+  elif [ "$max_n" -lt "$req_n" ]; then
+    PROOF_STATUS="cannot_prove"
+    PROOF_MISSING="$(pg_json "$IMPACT_JSON" '.degradations[0].detail' 2>/dev/null)"
+    PROOF_MISSING="${PROOF_MISSING:-no way to drive the real runtime from here}"
+    # A NOTE by default, not a warning — and the distinction is load-bearing. This is
+    # a fact about the machine, not a defect in the delivery: nothing the author can
+    # write in this diff makes an absent runtime appear. Emitting a warning would make
+    # `--strict` fail every delivery on every box without an e2e setup, which is not
+    # rigour, it is how a gate gets aliased to `true`. Repos that DO want it enforced
+    # set requireProof, and then it blocks with the capability named.
+    _msg="cannot-prove: this change requires $REQUIRED_LEVEL, but only $MAX_LEVEL is reachable here — $PROOF_MISSING. Add commands.e2e or smoke[] to proofgate.json, or say plainly in your status that the runtime claim is UNPROVEN."
+    if [ "$(cfg '.requireProof')" = "true" ]; then warn "$_msg" "proof-level"; else note "$_msg" "proof-level"; fi
+  else
+    PROOF_STATUS="unproven"
+    warn "proof-level: this change requires $REQUIRED_LEVEL, the ledger has $ACHIEVED_LEVEL. Record the run that proves it: claim.sh add --claim \"...\" --level $REQUIRED_LEVEL --run \"<cmd>\" --expect \"<marker unique to the new version>\"" "proof-level"
+  fi
+fi
+
+# ── ledgers: append-only, hash-chained ───────────────────────────────────────
+# Every row carries the hash of the row before it, so a line appended or edited by
+# hand — the agent writing its own evidence — breaks the chain. This is tamper-
+# EVIDENT, not tamper-proof: anything with a shell can recompute the whole chain.
+# What it removes is the cheap, deniable edit, and it makes the expensive one visible.
+CHAIN_OK=true
+if [ "$DRY" != 1 ] && [ -z "$ONLY" ] && command -v pg_ledger_verify >/dev/null 2>&1; then
+  for _led in proofgate-claims proofgate-hypotheses; do
+    _f="$(pg_git_dir)/$_led.jsonl"
+    [ -f "$_f" ] || continue
+    if ! _bad="$(pg_ledger_verify "$_f")"; then
+      CHAIN_OK=false
+      fail "ledger-chain: $_led.jsonl line $_bad does not follow the chain — a row was written or edited outside the tooling. Evidence that can be typed is not evidence." "ledger-chain"
+    fi
+  done
+fi
+
 # ── verdict ──────────────────────────────────────────────────────────────────
 say "────────────────────────────────────────────────────────────"
 if [ "$STRICT" = 1 ] && [ "$WARNS" -gt 0 ]; then
@@ -363,7 +419,8 @@ if [ "$DRY" != 1 ] && [ -z "$ONLY" ]; then
   VERDICT="{\"schemaVersion\":2,\"sha\":\"$SHA\",\"generatedAt\":\"$TS\",\"flags\":{\"build\":$([ "$BUILD" = 1 ] && echo true || echo false),\"strict\":$([ "$STRICT" = 1 ] && echo true || echo false),\"smoke\":$([ "$SMOKE" = 1 ] && echo true || echo false)},\"checks\":[$CHECK_JSON],\"fails\":$FAILS,\"warns\":$WARNS,\"pass\":$PASS_BOOL"
   VERDICT="$VERDICT,\"impact\":{\"risk_class\":\"${RISK:-unknown}\",\"navigation_backend\":\"${NAV_BACKEND:-none}\",\"navigation_confidence\":\"${NAV_CONF:-none}\",\"skeptic_required\":${SKEPTIC_REQ:-false}}"
   VERDICT="$VERDICT,\"required_level\":\"${REQUIRED_LEVEL:-unknown}\",\"max_achievable_level\":\"${MAX_LEVEL:-unknown}\""
-  VERDICT="$VERDICT,\"degradations\":[$(printf '%s' "${IMPACT_DEGR:-}" | awk '{for(i=1;i<=NF;i++) printf "%s\"%s\"", (i>1?",":""), $i}')]}"
+  VERDICT="$VERDICT,\"degradations\":[$(printf '%s' "${IMPACT_DEGR:-}" | awk '{for(i=1;i<=NF;i++) printf "%s\"%s\"", (i>1?",":""), $i}')]"
+  VERDICT="$VERDICT,\"achieved_level\":\"${ACHIEVED_LEVEL:-unknown}\",\"proof\":{\"status\":\"$PROOF_STATUS\",\"missing\":\"$(pg_json_escape "$PROOF_MISSING")\"},\"chain_ok\":$CHAIN_OK}"
   if [ -d "$GD" ]; then
     TMPV="$(mktemp "$GD/.proofgate-verdict.XXXXXX" 2>/dev/null || mktemp)"
     printf '%s\n' "$VERDICT" > "$TMPV" && mv "$TMPV" "$GD/proofgate-verdict.json"

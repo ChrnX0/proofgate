@@ -35,6 +35,23 @@ case "$INPUT" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 
     if [ "$VSHA" = "$HEAD_SHA" ] && grep -q '"pass":true' "$V" 2>/dev/null; then exit 0; fi
   fi
 
+
+  # requireProof (opt-in): a passing mechanical verdict says "nothing I check is
+  # broken", which is not the same as "the claim is proven". Repos that want the
+  # stronger contract set requireProof:true and the push waits for the evidence.
+  # Pure literal greps — this hook must not depend on a JSON parser.
+  if [ "$(cfg '.requireProof' 2>/dev/null)" = "true" ] && [ -f "$V" ]; then
+    if grep -q '"proof":{"status":"cannot_prove"' "$V" 2>/dev/null; then
+      reason="ProofGate stop-guard: this change requires evidence that cannot be produced on this machine. Say so explicitly in your status — UNPROVEN, and why — rather than implying it was verified."
+      printf '{"decision":"block","reason":"%s"}\n' "$(pg_json_escape "$reason")"
+      exit 0
+    elif grep -q '"proof":{"status":"unproven"' "$V" 2>/dev/null; then
+      reason="ProofGate stop-guard: the mechanical gate passed but the central claim is not proven to the level this change requires. Record the run with claim.sh, or state plainly what is NOT verified."
+      printf '{"decision":"block","reason":"%s"}\n' "$(pg_json_escape "$reason")"
+      exit 0
+    fi
+  fi
+
   GATE="bash .proofgate/verify.sh"; [ -f "$ROOT/.proofgate/verify.sh" ] || GATE="the ProofGate verify.sh"
   reason="ProofGate stop-guard: there is no fresh passing verdict for HEAD ${HEAD_SHA:0:7}. Before declaring this done, run \`$GATE\`, make it pass, and walk the judgment gate (SKILL.md step 2). If the gate legitimately cannot pass yet, say what is verified vs not in your status. (Disable: stopGuard:false in proofgate.json.)"
   # Emit the block decision as JSON on stdout.

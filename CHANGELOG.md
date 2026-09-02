@@ -1,5 +1,68 @@
 # Changelog
 
+## 2.8.0 — 2026-09-02
+
+The report is rendered, not written.
+
+### Added
+
+- **`claim.sh` — a claims ledger where the evidence level is EARNED, not typed.** The
+  judgment gate has always said a runtime claim is done only at E3. It also, until now,
+  let an agent that ran nothing type `VERIFIED (E3): the checkout flow works` — every
+  word free. The evidence hierarchy, the banned-language list, the excuse-buster table:
+  all of it rested on the author volunteering an honest level at exactly the moment they
+  are least inclined to. That is not a discipline problem, it is a missing mechanism.
+
+  `claim.sh add --run "<cmd>"` **executes the command**, records the exit code, a hash of
+  the output and the duration, and appends a hash-chained row. There is no code path that
+  writes a level above E0 without this script having run something. Four refusals close
+  the obvious ways around it:
+
+  - `--run "true"`, `npm test || true`, `pytest ; exit 0` — a command whose exit status
+    cannot change proves nothing. (A real pipeline like `cat x | grep -q y` is fine; the
+    check distinguishes a simple constant-status command and a success-forcing suffix
+    from a pipeline that can actually go red.)
+  - **E3/E4 require `--expect`** — a marker that must appear in the output. "It returned
+    200" is compatible with the old build still being live, which is why the SKILL has
+    always asked for a marker unique to the NEW version. Now it is mechanical.
+  - **`--kind red-test` is refused if the command passes.** A test that was never red has
+    never shown it can see the bug.
+  - **`--kind green-test` must re-run the same command as its `--same-as` red row.** A
+    different command passing proves a different thing.
+
+  A run that fails, or a marker that does not appear, still writes the row — at **E0**,
+  with the reason recorded. That row is the valuable one: it is how "not verified"
+  survives into the status instead of being smoothed over.
+
+- **`claim.sh render` — the status block is GENERATED.** It is assembled from the verdict,
+  the blast radius and the ledger, so every line traces to something that ran. The SKILL
+  and the templates now say plainly: a status you compose by hand is E0 by construction,
+  because nothing produced it. An empty ledger renders as `VERIFIED: NOTHING`, which is
+  the delivery's real state, not a formatting problem.
+
+- **`proof-level`: required vs achieved, with three distinct outcomes.** The blast radius
+  says what this change owes; the ledger says what was earned. `proven` · `unproven` (the
+  evidence is missing and producible here) · `cannot_prove` (it is impossible here — no
+  e2e command, no `smoke[]`, no dev server to curl).
+
+  Keeping the third separate is the whole point. `cannot_prove` is a fact about the
+  machine, not a defect in the diff: nothing the author writes makes an absent runtime
+  appear. So it is a NOTE by default and never fails `--strict` — a rule that failed
+  every delivery on every box without an e2e setup would not be rigour, it would be the
+  fastest possible route to `alias verify=true`. Repos that want it enforced set
+  `requireProof: true`, and then the push-guard and stop-guard block with the missing
+  capability named.
+
+- **Hash-chained ledgers + the `ledger-chain` check.** Every row carries the hash of the
+  row before it, so a line appended or edited by hand — the agent writing its own
+  evidence — breaks the chain and FAILS the gate. Stated honestly in the code and here:
+  this is tamper-**evident**, not tamper-proof. Anything with a shell can recompute the
+  whole chain. What it removes is the cheap, deniable edit, and it makes the expensive
+  one visible.
+
+- **`/proofgate:claim` and `/proofgate:report`**, plus `requireProof` in the config
+  reference.
+
 ## 2.7.0 — 2026-09-02
 
 The gate learns how big the change is.

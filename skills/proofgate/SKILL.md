@@ -60,6 +60,29 @@ never silent dismissal. False positive? `proofgate-allow` on the line, a
 
 ### The evidence hierarchy — where does your central claim actually sit?
 
+**Record it, do not assert it.** The level of a claim is now something a command
+earns, not something you type:
+
+```sh
+# the bug reproduces — BEFORE the fix (refused if the command passes)
+bash scripts/claim.sh add --kind red-test --run "<the failing test>"
+# the same command now passes
+bash scripts/claim.sh add --kind green-test --same-as <red-id> --run "<the SAME test>"
+# the central runtime claim
+bash scripts/claim.sh add --claim "checkout completes" --level E3 \
+  --run "curl -s localhost:3000/health" --expect '"build":"<new sha>"'
+# what you did NOT verify — declared, not omitted
+bash scripts/claim.sh add --kind gap --claim "the concurrent path is not exercised"
+```
+
+`claim.sh` RUNS the command, records the exit code and a hash of the output, and writes
+a hash-chained row. A level above E0 has no code path that does not go through a real
+run. `--expect` is mandatory at E3+ because "it returned 200" is compatible with the old
+build still being live. A run that fails, or a marker that does not appear, still writes
+the row — at E0, with the reason. **That** row is the valuable one.
+
+
+
 | Level | Name | What it proves |
 |------|------|----------------|
 | **E0** | believed / asserted | nothing — it's just words |
@@ -223,13 +246,29 @@ At the top of a task, write down the ONE observation that will prove it done (th
 evidence). If you can't name it, you don't understand the task yet. Design toward that
 observation — not toward "it looks right."
 
-## Output template (paste into your status/PR)
+## Output template — GENERATED, never typed
+
+```sh
+bash scripts/claim.sh render      # or /proofgate:report
+```
+
+Paste that output verbatim. It is assembled from the verdict, the blast radius and the
+claims ledger, so every line traces to something that ran.
+
+**A status you compose by hand is E0 by construction** — nothing produced it. That is
+not a style rule: this whole skill's discipline rested on you volunteering an honest
+level at exactly the moment you are most motivated not to, and the render removes the
+choice. If it prints `VERIFIED: NOTHING`, that is the delivery's real state, not a
+formatting problem.
 
 ```
 PROOFGATE — <delivery>
-Mechanical: ✅ typecheck ✅ lint ✅ tests ✅ build ✅ committed ✅ guards (19)
-VERIFIED (level): <central claim @ E3 — flow X driven via curl/e2e/screenshot + evidence>
-NOT TESTED: <what + how it will be>
-Root cause (if fix): <layer + evidence + counter-proof checked>
-Lesson recorded: <guard/test/doc> | none
+Mechanical: ✅ passed · 1 warning(s) · verdict for <sha>
+Blast radius: L2 · needs E3 · reachable here: E3 · nav ctags (high)
+VERIFIED (level · evidence):
+  E3 [central] checkout completes
+       ↳ curl -s localhost:3000/health → exit 0 · matched /"build":"<new sha>"/
+NOT TESTED (declared):
+  · the concurrent path is not exercised
+STATUS: central claim at E3 (required E3)
 ```

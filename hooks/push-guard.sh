@@ -70,6 +70,22 @@ except Exception:pass' 2>/dev/null)"
     fi
   fi
 
+
+  # requireProof (opt-in): a passing mechanical verdict says "nothing I check is
+  # broken", which is not the same as "the claim is proven". Repos that want the
+  # stronger contract set requireProof:true and the push waits for the evidence.
+  # Pure literal greps — this hook must not depend on a JSON parser.
+  if [ "$(cfg '.requireProof' 2>/dev/null)" = "true" ] && [ -f "$V" ]; then
+    if grep -q '"proof":{"status":"cannot_prove"' "$V" 2>/dev/null; then
+      MISS="$(grep -o '"missing":"[^"]*"' "$V" 2>/dev/null | head -1 | sed -e 's/^"missing":"//' -e 's/"$//')"
+      echo "ProofGate: push blocked — the delivery requires evidence this machine cannot produce (${MISS:-no runtime driver}). Configure commands.e2e or smoke[] in proofgate.json, or set requireProof:false and say plainly in your status that the runtime claim is UNPROVEN." >&2
+      exit 2
+    elif grep -q '"proof":{"status":"unproven"' "$V" 2>/dev/null; then
+      echo "ProofGate: push blocked — the mechanical gate passed, but the central claim has not been PROVEN to the level this change requires. Record the run: claim.sh add --claim \"...\" --level <E3> --run \"<cmd>\" --expect \"<marker>\". (Bypass: requireProof:false in proofgate.json.)" >&2
+      exit 2
+    fi
+  fi
+
   # 6) Block with an actionable reason.
   GATE="bash .proofgate/verify.sh"; [ -f "$ROOT/.proofgate/verify.sh" ] || GATE="the ProofGate skill / verify.sh"
   echo "ProofGate: push blocked — no fresh passing verdict for HEAD ${HEAD_SHA:0:7}. Run \`$GATE\` (it must pass), then push. Bypass: pushGuard:false in proofgate.json, or PROOFGATE_HOOK_OFF=1." >&2
