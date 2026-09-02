@@ -63,7 +63,8 @@ A **delivery gate** that sits between *"the code is written"* and *"the work is 
 | **1 · Mechanical** | tests · lint · push state · **23 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, version-bumped-but-never-released, …) → a **SHA-bound verdict** | a script — `verify.sh` |
 | **2 · Judgment** | root cause + counter-proof · an **evidence hierarchy** (believed → static → tested → exercised → in-prod; "done" needs ≥ exercised) · **diagnosis as a falsifiable hypothesis** · brutally honest status | you (or your agent), **in writing** |
 | **3 · Adversarial** | a **default-refute skeptic** tries to break every "it works" claim against the diff | the `gate-skeptic` subagent |
-| **4 · Enforcement** | hooks refuse to `git push` — or (opt-in) to declare *done* — without a fresh passing verdict | `push-guard` / `stop-guard` |
+| **4 · Enforcement** | hooks refuse to `git push` — or (opt-in) to declare *done* — without a fresh passing verdict, and (opt-in) to edit source while a bugfix has no failing test | `push-guard` · `stop-guard` · `edit-guard` |
+| **5 · Proof** | the verdict, radius, claims and skeptic record **sealed to the commit** as a git note that travels with the push and CI verifies | `proof.sh seal` |
 
 Born from real production scars: "fixes" that fixed nothing, a documented bug that still reached the user, hopeful patches shipped in the dark. Every rule here has a scar behind it. **This isn't philosophy — it's a rap sheet.**
 
@@ -226,6 +227,37 @@ not do. An empty caller list from a low-confidence run means *"I did not find an
 *"there are none"*, and the output never lets you confuse the two. Point `impact.backendCmd`
 at a real language server and it hands the job over.
 
+### 📎 The evidence travels with the commit
+
+Everything above lives in `.git/` and is local. The reviewer of your pull request reads a
+description that *claims* a gate ran, and has two options: believe it, or re-do the work
+— which is the same trust-me problem, one level up.
+
+```sh
+bash .proofgate/proof.sh seal --push     # → refs/notes/proofgate on this commit
+```
+
+The note carries the verdict, the blast radius, the claims for this commit, the skeptic
+record and the audit segment those claims rest on, each hashed. It does not change the
+commit, it travels with a push, and the GitHub Action verifies it into the job summary.
+
+**Be precise about what that proves.** It attests to *what the local gate saw*: these
+commands ran, with these exit codes and output hashes. It does **not** attest that the
+local gate was honest — anything with a shell can write a ledger and seal it. So:
+
+- `proof.sh verify` catches tampering **after** sealing (the hashes stop matching);
+- `proof.sh replay` re-runs the recorded commands and **downgrades the bundle in place**
+  if the evidence no longer reproduces;
+- CI re-running the gate is the independent check. The note is what makes the two
+  comparable, and what turns "trust me" into something a reviewer can check in a second.
+
+The same honesty applies to the enforcement layer generally: hash-chained ledgers make a
+hand-written row **evident**, not impossible; the edit-guard can be walked around by
+editing through Bash. Every one of those limits is stated in the code that implements it.
+This raises the cost of a false claim and makes the expensive version visible — it does
+not make lying impossible, and a tool that claimed otherwise would be doing exactly what
+it exists to prevent.
+
 ## ❓ FAQ
 
 **Isn't this just a linter?**
@@ -247,6 +279,7 @@ The guard design rule is *low false-positive above all* (see [CONTRIBUTING](CONT
 
 - Per-workspace monorepo awareness (changed packages only)
 - A reference `impact.backendCmd` implementation (real LSP go-to-definition instead of ctags/grep)
+- Cross-repo memory: an incident recorded in one service warning the next one that touches the same shape
 - Entropy-based secret detection
 - SARIF / rdjson export for code-scanning ingestion
 - Cross-model skeptic (a second model as independent auditor)

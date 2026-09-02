@@ -1,6 +1,6 @@
 ---
 name: proofgate
-description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 23 diff guards) that computes the change's blast radius and writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
+description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready), and a protocol to run DURING it. Measures the change's blast radius and charges evidence in proportion (L1 docs → E1, source → E3, auth/money/migrations → E3 plus a mandatory adversarial pass). Records claims by RUNNING the command that proves them, so a level cannot be typed; keeps hypotheses and their refutations across context compaction; anchors project memory to code so stale facts announce themselves; and seals the evidence to the commit as a git note a reviewer can verify. Also use when a bug reappears, a fix has failed twice, a status is about to be written, or you are about to say "done".
 ---
 
 # ProofGate — acceptance with EVIDENCE, not hope
@@ -11,6 +11,32 @@ Plausible ≠ proven.
 
 **Golden rule: a checklist without evidence is theater.** Every item below is
 answered with a COMMAND THAT RAN, a LINK, a NUMBER — never with "I believe so."
+
+## The protocol: RECALL → HYPOTHESIZE → EXPERIMENT → IMPLEMENT → PROVE → SEAL → REPORT
+
+The gate used to be a checkpoint at the end. That was always half the tool: by the time
+you are writing a status, the expensive mistakes — investigating an explanation that was
+already ruled out, editing before establishing the bug is reachable, trusting a note that
+stopped being true — have already been made. Each phase below has a **mechanical anchor**:
+a command or a hook, not a reminder.
+
+| Phase | What it prevents | Anchor |
+|---|---|---|
+| **RECALL** | re-deriving what the project already knows; re-running a dead investigation | `/proofgate:preflight` · `memory.sh recall --changed` · `hypothesis.sh brief` · SessionStart hook |
+| **HYPOTHESIZE** | a cause that is implemented instead of falsified | `hypothesis.sh open --kind bugfix --symptom …` |
+| **EXPERIMENT** | a result that describes a state nobody designed | `experiment.sh <id> -- <cmd>` (own worktree) |
+| **IMPLEMENT** | the fix that fixed nothing | `editGuard` — no source edit while a bugfix hypothesis has no RED test |
+| **PROVE** | a level that was typed rather than earned | `claim.sh add --run` · `verify.sh` · the skeptic panel |
+| **SEAL** | "trust me, the gate ran" | `proof.sh seal --push` → a git note the reviewer can verify |
+| **REPORT** | a status written by the same process that wrote the code | `claim.sh render` — generated, never composed |
+
+Two of those are worth stating as rules, because they are the ones under pressure at the
+moment they apply:
+
+- **The counter-proof comes first.** A suite that was green before your edit and green
+  after it has proven that nothing else broke — not that the bug is gone.
+- **The status is rendered, not written.** A block you compose by hand is E0 by
+  construction, because nothing produced it.
 
 ## The 5-step gate function (run it before ANY status claim)
 
@@ -322,6 +348,25 @@ Today's pain is tomorrow's tooling. Re-learning from scratch is forbidden.
 At the top of a task, write down the ONE observation that will prove it done (the E3+
 evidence). If you can't name it, you don't understand the task yet. Design toward that
 observation — not toward "it looks right."
+
+## Seal it, so the reviewer can check instead of believing
+
+```sh
+bash scripts/proof.sh seal --push      # or /proofgate:seal
+```
+
+Everything above lives in `.git/` and is local. A reviewer reads a description that
+*claims* a gate ran and has two options: believe it, or re-do the work — the same
+trust-me problem this skill exists to remove, one level up. `seal` attaches the verdict,
+the blast radius, the claims for this commit and the skeptic record to the commit as a
+git note, hashed, and `--push` sends it with the code.
+
+Be precise about what it proves. It attests to **what the local gate saw**: these
+commands ran, with these exit codes and output hashes. It does **not** attest that the
+local gate was honest — anything with a shell can write a ledger and seal it. `verify`
+catches tampering after the fact; `replay` re-runs the recorded commands and downgrades
+the bundle in the note if the evidence no longer reproduces; CI re-running the gate is
+the independent check. The note is what makes the two comparable.
 
 ## Output template — GENERATED, never typed
 

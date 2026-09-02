@@ -717,9 +717,11 @@ ok_t "$([ "$(mm_code "$M3" revoke m-nope --reason x)" = 2 ] && echo 1 || echo 0)
 
 # The lesson loop: an incident opens a lesson, and it stays open until something ENFORCES it.
 ok_t "$([ -f "$M3/.proofgate/lessons.jsonl" ] && echo 1 || echo 0)" "lessons: an incident opens a lesson"
+# shellcheck source=/dev/null
 LID="$( cd "$M3" && PROOFGATE_LIB="$LIB" . "$LIB" && pg_lessons_open | awk '{print $1}' | head -1 )"
 ok_t "$([ -n "$LID" ] && echo 1 || echo 0)" "lessons: the new lesson is open"
 mm "$M3" add --fact "documented in the pricing README" --class decision --provenance human --anchor src/db.ts --resolves "$LID" >/dev/null
+# shellcheck source=/dev/null
 LEFT="$( cd "$M3" && PROOFGATE_LIB="$LIB" . "$LIB" && pg_lessons_open )"
 ok_t "$([ -z "$LEFT" ] && echo 1 || echo 0)" "lessons: --resolves closes it"
 rm -rf "$M1" "$M2" "$M3"
@@ -879,7 +881,6 @@ sk_record() { ( cd "$1" && printf '%s\n' "$2" | PROOFGATE_LIB="$LIB" bash "$SKEP
 sk_json() { cat "$1/.git/proofgate-skeptic.json" 2>/dev/null; }
 
 S1="$(sk_repo)"
-SCID="$( cd "$S1" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null | awk '{print $1}' | head -1 )"
 # A refutation whose command really fails is real, and becomes a lesson.
 sk_record "$S1" "REFUTED - :: the empty case is not covered :: repro: grep -q ZZZ a.txt" >/dev/null
 J="$(sk_json "$S1")"
@@ -1070,6 +1071,95 @@ walk_case() { # walk_case <name> <parser-fn>
 command -v jq      >/dev/null 2>&1 && walk_case "walker: quoted key resolves (jq)"     jq_walk     || echo "SKIP  jq walker (no jq)"
 command -v node    >/dev/null 2>&1 && walk_case "walker: quoted key resolves (node)"   node_walk   || echo "SKIP  node walker (no node)"
 command -v python3 >/dev/null 2>&1 && walk_case "walker: quoted key resolves (python)" py_walk     || echo "SKIP  python walker (no python3)"
+
+echo "══ proof: the evidence travels with the commit ═════════════"
+PROOF="$ROOT/skills/proofgate/scripts/proof.sh"
+pf_repo() { # a sealed-ready repo: real remote, a passing verdict, a claim on HEAD
+  local tmp remote; tmp="$(mktemp -d)"; remote="$(mktemp -d)"
+  ( cd "$remote" && git init -q --bare ) >/dev/null 2>&1
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t
+    printf '{"commands":{"typecheck":"true","test":"true","lint":"true","e2e":"true"}}\n' > proofgate.json
+    mkdir -p src && echo 'export const x=1;' > src/a.ts && git add -A && git commit -qm base
+    git remote add origin "$remote" && git push -qu origin main && git checkout -q -b f
+    echo 'export const x=2;' > src/a.ts && git add -A && git commit -qm change
+    # A command containing a backslash escape: this is the shape that broke replay.
+    PROOFGATE_LIB="$LIB" bash "$CLAIM" add --claim "the marker is served" --level E3 \
+      --run "printf 'calc=3\\n'; printf 'build:v2\\n'" --expect 'build:v2'
+    PROOFGATE_LIB="$LIB" bash "$VERIFY" </dev/null ) >/dev/null 2>&1
+  printf '%s %s' "$tmp" "$remote"
+}
+pf() { ( cd "$1" && PROOFGATE_LIB="$LIB" bash "$PROOF" "${@:2}" </dev/null 2>&1 ); }
+
+# shellcheck disable=SC2046  # pf_repo prints "<repo> <remote>"; the split is the point
+set -- $(pf_repo); P1="$1"; PR1="$2"
+ok_t "$(printf '%s' "$(pf "$P1" seal)" | grep -q "sealed to" && echo 1 || echo 0)" "proof: seal writes a note on HEAD"
+ok_t "$([ "$(pf "$P1" verify)" = "verified" ] && echo 1 || echo 0)" "proof: verify passes on an untouched bundle"
+# Tampering AFTER the seal is what the hashes are for.
+( cd "$P1" && git notes --ref=refs/notes/proofgate show HEAD | sed 's/"pass":true/"pass":false/'     | git notes --ref=refs/notes/proofgate add -f -F - HEAD ) >/dev/null 2>&1
+ok_t "$(printf '%s' "$(pf "$P1" verify)" | grep -q "tampered" && echo 1 || echo 0)" "proof: an edited note is detected as tampered"
+( cd "$P1" && git notes --ref=refs/notes/proofgate remove HEAD ) >/dev/null 2>&1
+pf "$P1" seal >/dev/null
+# Replay must re-run the command AS RECORDED. It used to run the JSON-escaped form —
+# a different command from the one being checked, in the component whose only job is
+# confirming that recorded evidence still reproduces.
+RP="$(pf "$P1" replay)"
+ok_t "$(printf '%s' "$RP" | grep -q "the recorded evidence reproduces" && echo 1 || echo 0)" "proof: replay re-runs the evidence and it reproduces"
+ok_t "$(printf '%s' "$RP" | grep -q "output hash matched 1" && echo 1 || echo 0)"      "proof: replay runs the command as recorded, not its escaped form"
+# An amend makes a different commit; evidence about the old one is not evidence about it.
+( cd "$P1" && git commit -q --amend --no-edit ) >/dev/null 2>&1
+ok_t "$(printf '%s' "$(pf "$P1" verify)" | grep -q "missing" && echo 1 || echo 0)" "proof: the note does not survive an amend (by design)"
+rm -rf "$P1" "$PR1"
+
+# Refusals: a seal that does not describe this exact commit attests to nothing.
+# shellcheck disable=SC2046
+set -- $(pf_repo); P2="$1"; PR2="$2"
+( cd "$P2" && echo 'export const x=3;' > src/a.ts && git add -A && git commit -qm later ) >/dev/null 2>&1
+ok_t "$(printf '%s' "$(pf "$P2" seal)" | grep -q "different commit" && echo 1 || echo 0)" "proof: seal refuses a verdict from another commit"
+( cd "$P2" && git reset -q --hard HEAD~1 && echo dirty > dirty.txt ) >/dev/null 2>&1
+ok_t "$(printf '%s' "$(pf "$P2" seal)" | grep -q "working tree is dirty" && echo 1 || echo 0)" "proof: seal refuses a dirty tree"
+rm -rf "$P2" "$PR2"
+
+P3="$(mktemp -d)"
+( cd "$P3" && git init -q -b main && git config user.email t@t && git config user.name t && echo x > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
+ok_t "$(printf '%s' "$(pf "$P3" seal)" | grep -q "no verdict" && echo 1 || echo 0)" "proof: seal refuses without a verdict"
+rm -rf "$P3"
+
+# pg_json_field is what makes replay correct — pin it directly on the escaping that broke.
+# shellcheck source=/dev/null
+PJF="$( . "$LIB"; pg_json_field '{"evidence":{"cmd":"printf '"'"'a\\nb'"'"'","exit":0}}' '.evidence.cmd' )"
+ok_t "$([ "$PJF" = "printf 'a\nb'" ] && echo 1 || echo 0)" "lib: pg_json_field unescapes a stored command correctly"
+
+# Evidence must survive the COMMIT that packages the code it describes, and must not
+# survive a change to that code. Keying claims on the HEAD sha alone failed the first
+# half: `git commit` orphaned every claim recorded before it, and a delivery with a full
+# ledger rendered as VERIFIED: NOTHING. Found by the end-to-end run, not by a unit test —
+# every piece was behaving exactly as specified.
+CID="$(mktemp -d)"
+( cd "$CID" && git init -q -b main && git config user.email t@t && git config user.name t
+  mkdir -p src && echo 'a' > src/f.ts && git add -A && git commit -qm base
+  echo 'b' > src/f.ts
+  PROOFGATE_LIB="$LIB" bash "$CLAIM" add --claim "b is there" --level E2 --run "cat src/f.ts | grep -q b"
+  git add -A && git commit -qm change ) >/dev/null 2>&1
+ok_t "$([ -n "$( cd "$CID" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null )" ] && echo 1 || echo 0)" \
+     "claims: evidence survives the commit that packages the same code"
+( cd "$CID" && echo 'c' > src/f.ts ) >/dev/null 2>&1
+ok_t "$([ -z "$( cd "$CID" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null )" ] && echo 1 || echo 0)" \
+     "claims: evidence does NOT survive a real change to the code (negative)"
+rm -rf "$CID"
+
+echo "══ audit-hook: a chronology, never evidence ════════════════"
+AU="$(mktemp -d)"
+( cd "$AU" && git init -q -b main && git config user.email t@t && git config user.name t
+  printf '{"audit":true}\n' > proofgate.json && git add -A && git commit -qm base ) >/dev/null 2>&1
+( cd "$AU" && printf '{"tool_name":"Bash","tool_input":{"command":"npm test"}}' | bash "$ROOT/hooks/audit-hook.sh" ) >/dev/null 2>&1
+ok_t "$([ -f "$AU/.git/proofgate-audit.jsonl" ] && echo 1 || echo 0)" "audit: audit:true → the command is recorded"
+ok_t "$(grep -q '"exit":null' "$AU/.git/proofgate-audit.jsonl" 2>/dev/null && echo 1 || echo 0)"      "audit: exit is null — a PostToolUse hook cannot know it, and must not pretend"
+( cd "$AU" && printf '{"audit":false}\n' > proofgate.json && rm -f .git/proofgate-audit.jsonl
+  printf '{"tool_name":"Bash","tool_input":{"command":"npm test"}}' | bash "$ROOT/hooks/audit-hook.sh" ) >/dev/null 2>&1
+ok_t "$([ -f "$AU/.git/proofgate-audit.jsonl" ] && echo 0 || echo 1)" "audit: off by default → nothing written (negative)"
+ac=0; ( cd "$AU" && printf 'not json' | bash "$ROOT/hooks/audit-hook.sh" ) >/dev/null 2>&1 || ac=$?
+ok_t "$([ "$ac" = 0 ] && echo 1 || echo 0)" "audit: malformed stdin → fail-open"
+rm -rf "$AU"
 
 echo "══ portability + docs (the promises we make about ourselves) ═"
 # CI runs macOS: bash 3.2 and BSD userland. Every one of these constructs works on

@@ -18,8 +18,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Guard + engine + hook acceptance tests
+      - name: Guard + engine + hook unit tests
         run: bash tests/run-tests.sh
+      - name: End-to-end acceptance (the whole protocol in a real repo)
+        run: bash tests/acceptance.sh
 
   shellcheck:
     runs-on: ubuntu-latest

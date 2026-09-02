@@ -89,6 +89,53 @@ pg_json_escape() {
   printf '%s' "$s" | tr -d '\000-\010\013\014\016-\037'
 }
 
+# pg_json_field <json-line> <jq-path> — read a value back out of a stored JSON line,
+# CORRECTLY unescaped, using the same jq → node → python3 chain as the config reader.
+#
+# The scar, found while testing `proof.sh replay`: it pulled the recorded command out of
+# the note with grep and ran it as-is. The ledger stores `printf 'calc=3\n'` escaped, so
+# what ran was a different command from the one being checked — the worst possible defect
+# in the component whose entire job is confirming that recorded evidence still reproduces.
+# It can fail honest evidence and it can pass evidence that no longer holds.
+#
+# The obvious fix — a few global replaces reversing pg_json_escape — is wrong, and wrong
+# in a way that looks right: sequential substitution cannot invert an escape, because
+# `\\n` (an escaped backslash then an 'n') matches the newline rule first. Undoing an
+# escape needs a single left-to-right scan, which is what a real parser does.
+# Anything READ BACK TO BE EXECUTED must go through here, never through grep.
+pg_json_field() {
+  local line="$1" path="$2"
+  if command -v jq >/dev/null 2>&1; then
+    printf '%s' "$line" | jq -r "$path // empty" 2>/dev/null; return
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    printf '%s' "$line" | PG_PATH="$path" python3 -c 'import sys,json,os,re
+try:
+ d=json.load(sys.stdin); p=os.environ["PG_PATH"].lstrip(".")
+ c=d
+ for seg in p.split("."):
+  m=re.match(r"^([^\[]*)(?:\[(\d+)\])?$",seg)
+  if not m: sys.exit(0)
+  k,i=m.group(1),m.group(2)
+  if k:
+   if not isinstance(c,dict): sys.exit(0)
+   c=c.get(k)
+  if i is not None:
+   if not isinstance(c,list) or int(i)>=len(c): sys.exit(0)
+   c=c[int(i)]
+ if c is None: sys.exit(0)
+ sys.stdout.write(c if isinstance(c,str) else json.dumps(c))
+except Exception: sys.exit(0)' 2>/dev/null
+    return
+  fi
+  if command -v node >/dev/null 2>&1; then
+    printf '%s' "$line" | PG_PATH="$path" node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{let c=JSON.parse(s);for(const seg of process.env.PG_PATH.replace(/^\./,"").split(".")){const m=seg.match(/^([^\[]*)(?:\[(\d+)\])?$/);if(!m)return;if(m[1]){if(c==null)return;c=c[m[1]];}if(m[2]!==undefined){if(c==null)return;c=c[Number(m[2])];}}if(c==null)return;process.stdout.write(typeof c==="string"?c:JSON.stringify(c));}catch(e){}})' 2>/dev/null
+    return
+  fi
+  # No parser at all: refuse rather than return a half-unescaped command to execute.
+  return 0
+}
+
 # pg_fingerprint <guard> <file> <line-content> — stable id for suppression.
 # Deliberately NOT the line NUMBER (churn-stable): guard name + path + a hash of
 # the offending line's text. Mirrors gitleaks' fingerprint idea. Used by
@@ -251,6 +298,35 @@ pg_tree_hash() {
   diff="$(git diff HEAD 2>/dev/null | pg_sha1)"
   unt="$(git ls-files -o --exclude-standard 2>/dev/null | LC_ALL=C sort | pg_sha1)"
   printf '%s' "$head-$diff-$unt" | pg_sha1
+}
+
+# pg_content_id — an identity for the CODE, independent of which commit it sits on.
+# Hash of every tracked blob plus every untracked file, so `git add -A && git commit`
+# does not change it: the bytes are the same bytes.
+#
+# The scar, found by the end-to-end acceptance run: claims were keyed to the HEAD sha at
+# the moment they were recorded, so committing ORPHANED every claim made before it. The
+# natural order of work — do it, prove it, commit it, gate it — silently produced a
+# delivery whose evidence had vanished, and the render said VERIFIED: NOTHING while the
+# ledger was full. The alternative (record everything only after the final commit, and
+# again after every amend) is exactly the kind of ceremony people stop performing.
+#
+# So evidence is bound to the code it was about, and stays attached across the commit
+# that packages that code. It does NOT survive an actual change to the code — which is
+# the property that matters, and the one this preserves.
+pg_content_id() {
+  # A map of path → the blob that is ACTUALLY there, not a union of index and worktree.
+  # Listing both put a modified file in twice under two hashes, so the id changed at the
+  # moment of committing — exactly the boundary it exists to survive. Later lines win.
+  {
+    git ls-files -s 2>/dev/null | awk '{print $4 " " $2}'
+    git diff --name-only 2>/dev/null | while IFS= read -r f; do
+      [ -f "$f" ] && printf '%s %s\n' "$f" "$(git hash-object -- "$f" 2>/dev/null)"
+    done
+    git ls-files -o --exclude-standard 2>/dev/null | while IFS= read -r f; do
+      [ -f "$f" ] && printf '%s %s\n' "$f" "$(git hash-object -- "$f" 2>/dev/null)"
+    done
+  } | awk '{ blob[$1] = $2 } END { for (p in blob) print p " " blob[p] }' | LC_ALL=C sort | pg_sha1
 }
 
 # pg_lock <name> / pg_unlock <name> — mkdir is the only atomic primitive available

@@ -77,6 +77,9 @@
   "requireSkeptic": false,
   "calibration": true,
 
+  "$comment_audit": "audit (opt-in, off) records a CHRONOLOGY of Bash commands — not evidence. A PostToolUse hook is not handed a reliable exit code, so entries store exit:null; a log that pretended otherwise would look like evidence while being unable to tell a passing command from a failing one. Its real job is that the edit-guard can be walked around by editing through Bash and .git/ is writable: neither is preventable, both leave a trace here. Off by default because it fires on every Bash call and command lines are a likely place for a credential to sit.",
+  "audit": false,
+
   "$comment_hooks": "The plugin's push-guard (PreToolUse) refuses `git push` without a fresh passing verdict; set pushGuard:false to disable. stopGuard (opt-in, default off) makes the Stop hook refuse 'done' without one.",
   "pushGuard": true,
   "stopGuard": false

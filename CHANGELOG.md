@@ -1,5 +1,93 @@
 # Changelog
 
+## 3.0.0 — 2026-09-02
+
+The proof travels with the commit.
+
+### Added
+
+- **`proof.sh` — the evidence, sealed to the commit as a git note.** Everything the gate
+  produced was local. The person reviewing the pull request read a description that
+  *claimed* a gate ran and had exactly two options: believe it, or re-do the work. That
+  is the same trust-me problem this project exists to remove, one level up.
+
+  `seal` bundles the verdict, the blast radius, the claims for this commit, the skeptic
+  record and the claim-linked audit segment, hashes each section, and attaches it under
+  `refs/notes/proofgate`. It does not change the commit and `--push` sends it with the
+  code.
+
+  **What it proves is stated precisely, in the code and in the docs**, because the
+  precision is the value: it attests to what the LOCAL gate SAW — these commands ran,
+  with these exit codes and output hashes. It does not attest that the local gate was
+  honest. So `verify` detects tampering after the seal, `replay` re-runs the recorded
+  commands and downgrades the bundle *in the note* when the evidence no longer
+  reproduces, and CI re-running the gate is the independent check. The note is what makes
+  the two comparable.
+
+  The note deliberately does not survive an amend or rebase (`notes.rewriteRef` is left
+  unset): evidence about the old commit is not evidence about the new one, and losing it
+  there is correct.
+
+- **`action.yml` verifies the note.** On a `pull_request` the checked-out commit is the
+  synthetic merge commit and the note is on the branch head — verifying the wrong sha
+  would report `missing` for every PR and teach everyone to ignore the step. A missing
+  note does not fail the job by default (teams have commits from before they started
+  sealing); **tampering does**, because that is a positive signal rather than an absence.
+  `require-proof-note` makes the stricter policy available.
+
+- **`hooks/audit-hook.sh` — a chronology, explicitly not evidence.** A PostToolUse hook is
+  not handed a reliable exit code, so every entry stores `exit: null`. A log that
+  pretended otherwise would be worse than none: it would look like evidence while being
+  unable to distinguish a command that passed from one that failed. Its real job is that
+  the edit-guard can be walked around by editing through Bash, and `.git/` is writable —
+  neither is preventable, and both leave a trace here. Opt-in, off by default.
+
+- **`tests/acceptance.sh` — the whole protocol, driven in a real repository.** Eighteen
+  steps: measure the radius, open a hypothesis, be blocked from editing, record the red
+  test, catch a pasted credential at edit time, prove red→green with the same command,
+  earn E3 with a marker, pass the gate, be blocked from pushing after the code moves,
+  seal, detect a tampered note, replay, be caught forging a ledger row, and render the
+  status from the ledger. It caught a defect no unit test could (see Fixed) and it is
+  ProofGate's own E3 evidence — for a tool made of shell and git, "the real runtime" is a
+  real repository with a real remote.
+
+- **The SKILL is now a protocol, not only a checkpoint**: RECALL → HYPOTHESIZE →
+  EXPERIMENT → IMPLEMENT → PROVE → SEAL → REPORT, each phase naming the command or hook
+  that anchors it. The gate at the end was always half the tool — by the time a status is
+  being written, the expensive mistakes have already happened.
+
+### Fixed
+
+- **Committing orphaned the evidence.** Claims were keyed to the HEAD sha at the moment
+  they were recorded, so `git commit` silently detached every claim made before it. The
+  natural order of work — do it, prove it, commit it, gate it — produced a delivery whose
+  status rendered `VERIFIED: NOTHING` with a full ledger sitting on disk. The only
+  workflow that worked was recording every claim *after* the final commit and again after
+  every amend, which is exactly the kind of ceremony people stop performing.
+
+  Evidence is now bound to the **code** it describes (`pg_content_id`: a map of path →
+  the blob actually there), not to the commit that happens to carry it. It survives the
+  commit that packages the same bytes and dies the moment the code changes — which is the
+  property worth keeping, and the one the SKILL calls *"green WHEN?"*.
+
+  **Found by the end-to-end run, not by a unit test**, against a suite that was entirely
+  green: every piece behaved exactly as specified, and the path through them did not
+  work. That is why `tests/acceptance.sh` now exists and runs in CI.
+
+- **`replay` re-ran a different command from the one it was checking.** The ledger stores
+  commands JSON-escaped, and replay pulled them out with `grep` and executed the escaped
+  form — so `printf 'calc=3\n'` ran with a literal backslash-n. That is the worst
+  possible defect in the component whose entire job is confirming that recorded evidence
+  still reproduces: it can fail honest evidence and it can pass evidence that no longer
+  holds.
+
+  The obvious fix is also wrong, and wrong in a way that looks right: a few global
+  substitutions reversing the escape cannot invert it, because `\\n` — an escaped
+  backslash followed by an `n` — matches the newline rule first. Undoing an escape needs
+  a single left-to-right scan, which is what a parser does. `pg_json_field` now reads any
+  value that will be EXECUTED through the same jq → node → python3 chain the config uses,
+  and a test pins exactly that escaping.
+
 ## 2.12.0 — 2026-09-02
 
 The skeptic gets a slice; the guards get a scorecard.

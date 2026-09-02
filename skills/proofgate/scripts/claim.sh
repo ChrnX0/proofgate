@@ -173,7 +173,7 @@ cmd_add() {
   [ -n "$run" ] && { out_path="$OUTDIR/$id.out"; head -50 "${tmpout:-/dev/null}" > "$out_path" 2>/dev/null; rm -f "${tmpout:-}"; }
 
   local body
-  body="{\"id\":\"$id\",\"ts\":\"$(pg_now)\",\"sha\":\"$HEAD_SHA\",\"tree\":\"$(pg_tree_hash)\",\"mode\":\"$MODE\""
+  body="{\"id\":\"$id\",\"ts\":\"$(pg_now)\",\"sha\":\"$HEAD_SHA\",\"content\":\"$(pg_content_id)\",\"mode\":\"$MODE\""
   body="$body,\"kind\":\"$kind\",\"hypothesis\":$([ -n "$hyp" ] && printf '"%s"' "$hyp" || echo null)"
   body="$body,\"same_as\":$([ -n "$same" ] && printf '"%s"' "$same" || echo null)"
   body="$body,\"claim\":\"$(pg_json_escape "$claim")\",\"level_claimed\":\"$level\",\"level_recorded\":\"$recorded\",\"reason\":$reason"
@@ -190,10 +190,27 @@ cmd_add() {
   fi
 }
 
-# Rows for one SHA. The ledger is append-only and spans the branch, so everything
-# reads through this: evidence attached to a DIFFERENT commit is not evidence about
-# this one, which is the timestamp problem the SKILL calls "green when?".
-rows_for_sha() { local sha="${1:-$HEAD_SHA}"; grep "\"sha\":\"$sha\"" "$LEDGER" 2>/dev/null; }
+# Rows that describe THIS code. Two ways a row qualifies, and the second one matters:
+#
+#   - it was recorded on this commit (sha match), or
+#   - it was recorded against identical CODE (content match) — which is what happens in
+#     the natural order of work: prove it, then commit it. Keying on the sha alone
+#     orphaned every claim made before the commit that packaged it, so a delivery with a
+#     full ledger rendered as VERIFIED: NOTHING.
+#
+# It still does not survive a real change: `content` is a hash of every tracked blob plus
+# untracked file, so editing anything invalidates the evidence — which is the property
+# the SKILL calls "green WHEN?", and the one worth keeping.
+rows_for_sha() {
+  local sha="${1:-$HEAD_SHA}" cid
+  [ -f "$LEDGER" ] || return 0
+  if [ "$sha" = "$HEAD_SHA" ]; then
+    cid="$(pg_content_id)"
+    grep -e "\"sha\":\"$sha\"" -e "\"content\":\"$cid\"" "$LEDGER" 2>/dev/null
+  else
+    grep "\"sha\":\"$sha\"" "$LEDGER" 2>/dev/null
+  fi
+}
 field() { printf '%s' "$1" | grep -o "\"$2\":\"[^\"]*\"" | head -1 | sed -e "s/^\"$2\":\"//" -e 's/"$//'; }
 
 cmd_list() {

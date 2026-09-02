@@ -9,7 +9,7 @@
 #   bash install.sh --uninstall                         # remove what we added
 #
 # What it does (and nothing else):
-#   1. copies verify.sh + lib.sh + impact.sh + claim.sh + hypothesis.sh + memory.sh + experiment.sh + mode.sh + skeptic.sh + guards.d/ + templates/ into .proofgate/
+#   1. copies verify.sh + lib.sh + impact.sh + claim.sh + hypothesis.sh + memory.sh + experiment.sh + mode.sh + skeptic.sh + proof.sh + guards.d/ + templates/ into .proofgate/
 #   2. --hook: wires .git/hooks/pre-push to gate before every push (existing hook
 #      is preserved as pre-push.local and still runs — we never clobber it)
 #   3. --ci: writes .github/workflows/proofgate.yml (warn-only to start)
@@ -62,6 +62,7 @@ vendor() { # copy from local clone if present, else from the release tarball
     cp "$SRC_DIR/skills/proofgate/scripts/experiment.sh" "$DEST/experiment.sh"
     cp "$SRC_DIR/skills/proofgate/scripts/mode.sh" "$DEST/mode.sh"
     cp "$SRC_DIR/skills/proofgate/scripts/skeptic.sh" "$DEST/skeptic.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/proof.sh" "$DEST/proof.sh"
     rm -rf "$DEST/guards.d" && cp -r "$SRC_DIR/skills/proofgate/scripts/guards.d" "$DEST/guards.d"
     rm -rf "$DEST/templates" && cp -r "$SRC_DIR/templates" "$DEST/templates" 2>/dev/null || true
   else
@@ -76,13 +77,14 @@ vendor() { # copy from local clone if present, else from the release tarball
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/experiment.sh "$DEST/experiment.sh"
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/mode.sh "$DEST/mode.sh"
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/skeptic.sh "$DEST/skeptic.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/proof.sh "$DEST/proof.sh"
     rm -rf "$DEST/guards.d" && cp -r "$TMP"/proofgate-main/skills/proofgate/scripts/guards.d "$DEST/guards.d"
     rm -rf "$DEST/templates" && cp -r "$TMP"/proofgate-main/templates "$DEST/templates" 2>/dev/null || true
     rm -rf "$TMP"
   fi
 }
 vendor
-chmod +x "$DEST/verify.sh" "$DEST/impact.sh" "$DEST/claim.sh" "$DEST/hypothesis.sh" "$DEST/memory.sh" "$DEST/experiment.sh" "$DEST/mode.sh" "$DEST/skeptic.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
+chmod +x "$DEST/verify.sh" "$DEST/impact.sh" "$DEST/claim.sh" "$DEST/hypothesis.sh" "$DEST/memory.sh" "$DEST/experiment.sh" "$DEST/mode.sh" "$DEST/skeptic.sh" "$DEST/proof.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
 set -- "$DEST"/guards.d/*.sh; echo "✅ vendored: .proofgate/verify.sh + lib.sh (+ $# guards)"
 
 if [ "$HOOK" = 1 ]; then
