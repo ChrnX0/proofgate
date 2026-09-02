@@ -9,7 +9,7 @@
 #   bash install.sh --uninstall                         # remove what we added
 #
 # What it does (and nothing else):
-#   1. copies verify.sh + lib.sh + guards.d/ + templates/ into .proofgate/
+#   1. copies verify.sh + lib.sh + impact.sh + guards.d/ + templates/ into .proofgate/
 #   2. --hook: wires .git/hooks/pre-push to gate before every push (existing hook
 #      is preserved as pre-push.local and still runs — we never clobber it)
 #   3. --ci: writes .github/workflows/proofgate.yml (warn-only to start)
@@ -43,6 +43,7 @@ vendor() { # copy from local clone if present, else from the release tarball
   if [ -f "$SRC_DIR/skills/proofgate/scripts/verify.sh" ]; then
     cp "$SRC_DIR/skills/proofgate/scripts/verify.sh" "$DEST/verify.sh"
     cp "$SRC_DIR/skills/proofgate/scripts/lib.sh" "$DEST/lib.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/impact.sh" "$DEST/impact.sh"
     rm -rf "$DEST/guards.d" && cp -r "$SRC_DIR/skills/proofgate/scripts/guards.d" "$DEST/guards.d"
     rm -rf "$DEST/templates" && cp -r "$SRC_DIR/templates" "$DEST/templates" 2>/dev/null || true
   else
@@ -50,13 +51,14 @@ vendor() { # copy from local clone if present, else from the release tarball
     curl -fsSL https://github.com/ChrnX0/proofgate/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP"
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/verify.sh "$DEST/verify.sh"
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/lib.sh "$DEST/lib.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/impact.sh "$DEST/impact.sh"
     rm -rf "$DEST/guards.d" && cp -r "$TMP"/proofgate-main/skills/proofgate/scripts/guards.d "$DEST/guards.d"
     rm -rf "$DEST/templates" && cp -r "$TMP"/proofgate-main/templates "$DEST/templates" 2>/dev/null || true
     rm -rf "$TMP"
   fi
 }
 vendor
-chmod +x "$DEST/verify.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
+chmod +x "$DEST/verify.sh" "$DEST/impact.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
 set -- "$DEST"/guards.d/*.sh; echo "✅ vendored: .proofgate/verify.sh + lib.sh (+ $# guards)"
 
 if [ "$HOOK" = 1 ]; then

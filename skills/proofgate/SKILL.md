@@ -1,6 +1,6 @@
 ---
 name: proofgate
-description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 18 diff guards) that writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
+description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 19 diff guards) that computes the change's blast radius and writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
 ---
 
 # ProofGate — acceptance with EVIDENCE, not hope
@@ -34,9 +34,19 @@ bash scripts/verify.sh --json                       # verdict as JSON on stdout
 bash scripts/verify.sh --report proofgate-report.md # write a markdown artifact
 ```
 
+**It measures the blast radius first.** Before a single command runs, `impact.sh`
+computes what the diff can break — over the WHOLE branch plus your working tree, so
+splitting the risky part into an earlier commit changes nothing — and classifies it:
+**L1** (docs/tests/config) · **L2** (source with callers) · **L3** (auth, money,
+migrations, crypto, permissions). That class sets the evidence this delivery owes:
+L1 → E1, everything else → **E3**, and L3 additionally requires the adversarial pass.
+The line it prints also names the navigation backend and its confidence, plus anything
+it could NOT do (`declared: no-ctags …`) — a gate that quietly knows less than it
+implies is the failure this whole skill exists to stop.
+
 Auto-detects your stack (pnpm/npm/yarn/bun, Cargo, Go, Python, Gradle/Maven, .NET,
 Ruby, PHP, Elixir, Deno) and runs what the machine checks better than judgment:
-typecheck / lint / tests (/ build) actually green; working tree committed; **18
+typecheck / lint / tests (/ build) actually green; working tree committed; **19
 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types,
 money-as-float, hand-built SQL, machine paths, dependency-lockfile drift,
 un-migrated schema constraints, …).
@@ -217,7 +227,7 @@ observation — not toward "it looks right."
 
 ```
 PROOFGATE — <delivery>
-Mechanical: ✅ typecheck ✅ lint ✅ tests ✅ build ✅ committed ✅ guards (18)
+Mechanical: ✅ typecheck ✅ lint ✅ tests ✅ build ✅ committed ✅ guards (19)
 VERIFIED (level): <central claim @ E3 — flow X driven via curl/e2e/screenshot + evidence>
 NOT TESTED: <what + how it will be>
 Root cause (if fix): <layer + evidence + counter-proof checked>

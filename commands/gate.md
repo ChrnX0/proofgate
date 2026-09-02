@@ -8,6 +8,17 @@ You are running the ProofGate acceptance ritual before anything is declared done
 **Golden rule: a checklist without evidence is theater.** Every claim below is
 answered with a command that ran, a link, or a number — never "I believe so."
 
+## 0 — Blast radius (what this change can break)
+`verify.sh` computes it first and prints one `impact:` line. Read it before anything
+else and say it out loud in your status: the **risk class** (L1 docs/tests · L2 source
+with callers · L3 auth/money/migration/crypto), the **evidence level it requires**
+(L1 → E1, otherwise **E3**), and the **navigation confidence**. Low confidence means
+callers came from a grep, not a symbol table — treat the caller list as a floor, not a
+census. The full measurement is at `.git/proofgate-impact.json`; `--slice` writes the
+skeptic's reading scope.
+
+If the radius says **L3**, an adversarial pass is not optional (step 3).
+
 ## 1 — Mechanical gate
 Run it and read the FULL output (do not trust the exit code alone):
 

@@ -5,6 +5,8 @@
 #   caso_verify() — run the WHOLE engine against a synthetic repo (with a bare
 #                   remote so the pushed-state check is real), assert exit + custom.
 #   caso_hook()   — feed a synthetic event on stdin to a hook, assert its exit/output.
+#   caso_tool()   — run ANY script in scripts/ against a synthetic repo, assert
+#                   exit + a custom assertion (impact.sh, claim.sh, ... ).
 # Positive AND negative paths for everything: a guard that never fires is as broken
 # as one that always does.
 set -uo pipefail
@@ -85,6 +87,37 @@ caso_hook() { # caso_hook <name> <hook> <expected-exit> <stdin-json> <setup-fn> 
   if [ "$ok" = 1 ]; then echo "PASS  $nome (exit $code)"; PASS=$((PASS + 1))
   else echo "FAIL  $nome — expected exit $esperado, got $code out=[$out]"; FAIL=$((FAIL + 1)); fi
   rm -rf "$tmp"
+}
+
+# ── generic tool harness ──────────────────────────────────────────────────────
+# caso_verify hard-codes verify.sh. Everything from 2.7 on ships its own script,
+# and each one needs the same fixture: a real repo, a real remote, a real base.
+caso_tool() { # caso_tool <name> <expected-exit> <setup-fn> <assert-fn> -- <script> [args...]
+  local nome="$1" esperado="$2" setup="$3" assert="$4"; shift 4
+  [ "${1:-}" = "--" ] && shift
+  local script="$1"; shift
+  local tmp remote; tmp="$(mktemp -d)"; remote="$(mktemp -d)"
+  ( cd "$remote" && git init -q --bare ) >/dev/null 2>&1
+  (
+    cd "$tmp" || exit 1
+    git init -q -b main && git config user.email t@t && git config user.name t
+    printf '{"commands":{"typecheck":"true","test":"true","build":"true","lint":"true"}}\n' > proofgate.json
+    git add -A && git commit -qm base
+    git remote add origin "$remote" && git push -qu origin main
+    git checkout -q -b feature
+    "$setup"
+    git add -A && git commit -qm change
+  ) >/dev/null 2>&1
+  local code=0
+  # </dev/null matters: a tool that reads stdin by accident must fail the test,
+  # not hang the suite. (pg_sha1 with a missing path did exactly that once.)
+  ( cd "$tmp" && PROOFGATE_LIB="$LIB" bash "$script" "$@" </dev/null ) >/tmp/pg-tool.out 2>&1 || code=$?
+  local ok=1
+  [ "$code" = "$esperado" ] || ok=0
+  if [ -n "$assert" ]; then ( cd "$tmp" && "$assert" ) || ok=0; fi
+  if [ "$ok" = 1 ]; then echo "PASS  $nome (exit $code)"; PASS=$((PASS + 1))
+  else echo "FAIL  $nome — expected exit $esperado, got $code (assert=$assert)"; FAIL=$((FAIL + 1)); fi
+  rm -rf "$tmp" "$remote"
 }
 
 echo "══ guards ═══════════════════════════════════════════════════"
@@ -287,6 +320,122 @@ a_not_sourceless() { ! grep -q "sourceless-diff" /tmp/pg-cv.out; }
 caso_verify "engine: docs-only diff → warns the guards were blind" 0 setup_docsonly a_sourceless
 caso_verify "engine: diff with source → no blind-gate warning"     0 setup_clean a_not_sourceless
 
+# ── verdict v2: the contract four un-upgradable readers depend on ────────────
+a_v2()         { grep -q '"schemaVersion":2' "$(git rev-parse --git-dir)/proofgate-verdict.json"; }
+a_one_sha()    { local v; v="$(git rev-parse --git-dir)/proofgate-verdict.json"
+                 [ "$(grep -o '"sha":"' "$v" | wc -l | tr -d ' ')" = 1 ] &&
+                 [ "$(grep -o '"pass":' "$v" | wc -l | tr -d ' ')" = 1 ] &&
+                 [ "$(wc -l < "$v" | tr -d ' ')" = 1 ]; }
+a_has_impact() { grep -q '"impact":{"risk_class":"L' "$(git rev-parse --git-dir)/proofgate-verdict.json"; }
+a_required()   { grep -q '"required_level":"E' "$(git rev-parse --git-dir)/proofgate-verdict.json"; }
+caso_verify "engine: verdict is schemaVersion 2"                  0 setup_clean a_v2
+caso_verify "engine: verdict has exactly one sha + one pass, one line" 0 setup_clean a_one_sha
+caso_verify "engine: verdict carries the impact risk class"       0 setup_clean a_has_impact
+caso_verify "engine: verdict carries required_level"              0 setup_clean a_required
+a_impact_line() { grep -q "impact: L" /tmp/pg-cv.out; }
+caso_verify "engine: prints the blast-radius line"                0 setup_clean a_impact_line
+a_no_impact_line() { ! grep -q "impact: L" /tmp/pg-cv.out; }
+caso_verify "engine: --no-impact skips it"                        0 setup_clean a_no_impact_line --no-impact
+
+echo "══ impact: the blast radius ════════════════════════════════"
+IMPACT="$ROOT/skills/proofgate/scripts/impact.sh"
+ij()  { cat "$(git rev-parse --git-dir)/proofgate-impact.json"; }
+ihas() { ij | grep -q "$1"; }
+setup_docs()     { echo "# notes" > NOTES.md; }
+setup_caller()   { mkdir -p src
+                   printf 'export function parsePrice(r){ return Number(r) }\n' > src/price.ts
+                   printf 'import { parsePrice } from "./price";\nexport const t = (x) => parsePrice(x);\n' > src/cart.ts
+                   printf 'import { parsePrice } from "./price";\nit("p", () => parsePrice("1"));\n' > src/price.test.ts
+                   git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+                   printf 'export function parsePrice(r){ const c = Math.round(Number(r)*100); return c/100 }\n' > src/price.ts; }
+setup_auth()     { mkdir -p src/auth; echo 'export const login = (u) => u;' > src/auth/login.ts; }
+setup_termstest() { mkdir -p tests; printf 'const bearer="x";\nconst isAdmin=true;\nconst refund=1;\n' > tests/a.test.ts; }
+setup_termssrc()  { mkdir -p src; printf 'const bearer="x";\nconst isAdmin=true;\n' > src/a.ts; }
+setup_e2e()      { mkdir -p src; echo 'export const x=1;' > src/a.ts
+                   printf '{"commands":{"typecheck":"true","test":"true","e2e":"npm run e2e"}}\n' > proofgate.json; }
+# Anti-slicing: the sin is committed FIRST, then an unrelated commit lands on top.
+# A gate that judged only the tip would see the second commit and call it L1.
+setup_sliced()   { mkdir -p src/payment; echo 'export const charge = (c) => c;' > src/payment/charge.ts
+                   git add -A >/dev/null 2>&1; git commit -qm "the real change" >/dev/null 2>&1
+                   echo "# docs" > NOTE.md; }
+
+a_L1()        { ihas '"risk_class":"L1"' && ihas '"required_level":"E1"'; }
+a_L2()        { ihas '"risk_class":"L2"' && ihas '"required_level":"E3"'; }
+a_L3()        { ihas '"risk_class":"L3"' && ihas '"skeptic_required":true'; }
+a_not_L3()    { ! ihas '"risk_class":"L3"'; }
+a_caller()    { ihas 'src/cart.ts'; }
+a_test_found(){ ihas 'src/price.test.ts'; }
+a_json_ok()   { json_ok "$(git rev-parse --git-dir)/proofgate-impact.json"; }
+a_no_sha_key(){ [ "$(ij | grep -o '"sha":"' | wc -l | tr -d ' ')" = 0 ] && ihas '"head_sha"'; }
+a_declared()  { ihas '"no-runtime-driver"' && ihas '"max_achievable_level":"E2"'; }
+a_e2e()       { ihas '"max_achievable_level":"E3"' && ihas '"runtime_driver":"commands.e2e"'; }
+a_sliced()    { ihas '"risk_class":"L3"' && ihas 'src/payment/charge.ts'; }
+
+caso_tool "impact: docs-only diff → L1 / needs E1"        0 setup_docs a_L1 -- "$IMPACT"
+caso_tool "impact: source with a caller → L2 / needs E3"  0 setup_caller a_L2 -- "$IMPACT"
+caso_tool "impact: the caller is actually listed"         0 setup_caller a_caller -- "$IMPACT"
+caso_tool "impact: the affected test is found"            0 setup_caller a_test_found -- "$IMPACT"
+caso_tool "impact: file under auth/ → L3 + skeptic req"   0 setup_auth a_L3 -- "$IMPACT"
+caso_tool "impact: sensitive terms in a TEST → not L3"    0 setup_termstest a_not_L3 -- "$IMPACT"
+caso_tool "impact: sensitive terms in SOURCE → L3"        0 setup_termssrc a_L3 -- "$IMPACT"
+# Found by this gate judging its own 2.7.0 diff: a README that DESCRIBES the
+# sensitive-term list is documentation, not a permission check. Scanning docs and
+# config for the terms escalated the release that introduced them.
+setup_termsdocs() { mkdir -p src; echo 'export const x=1;' > src/a.ts
+                    printf 'Terms we watch: bearer, isAdmin, refund, ALTER TABLE.\n' > GUIDE.md
+                    printf '{"sensitiveTerms":"bearer|isAdmin|refund"}\n' > cfg.json; }
+caso_tool "impact: those same terms in DOCS/CONFIG → not L3" 0 setup_termsdocs a_not_L3 -- "$IMPACT"
+caso_tool "impact: anti-slicing — earlier commit counted" 0 setup_sliced a_sliced -- "$IMPACT"
+caso_tool "impact: json is valid"                         0 setup_caller a_json_ok -- "$IMPACT"
+caso_tool "impact: no bare \"sha\" key (hook grep contract)" 0 setup_caller a_no_sha_key -- "$IMPACT"
+caso_tool "impact: no runtime → E3 unreachable, declared" 0 setup_caller a_declared -- "$IMPACT"
+caso_tool "impact: commands.e2e → E3 reachable"           0 setup_e2e a_e2e -- "$IMPACT"
+
+# An uncommitted edit is part of the blast radius. caso_tool commits its setup, so
+# this one is built by hand.
+tmpu="$(mktemp -d)"
+( cd "$tmpu" && git init -q -b main && git config user.email t@t && git config user.name t
+  mkdir -p src && echo 'export const x=1;' > src/a.ts && git add -A && git commit -qm base
+  printf 'export const x=2;\nexport function brandNew(){return 1}\n' > src/a.ts ) >/dev/null 2>&1
+( cd "$tmpu" && PROOFGATE_LIB="$LIB" bash "$IMPACT" --base HEAD </dev/null ) >/dev/null 2>&1
+if grep -q '"risk_class":"L2"' "$tmpu/.git/proofgate-impact.json" 2>/dev/null && grep -q 'brandNew' "$tmpu/.git/proofgate-impact.json" 2>/dev/null; then
+  echo "PASS  impact: UNCOMMITTED edit is in the radius"; PASS=$((PASS + 1))
+else echo "FAIL  impact: uncommitted edit was not counted"; FAIL=$((FAIL + 1)); fi
+rm -rf "$tmpu"
+
+# The backend seam. A real LSP client is not a shell script, so impact.sh hands the
+# job to `impact.backendCmd` — this proves the contract, and that it is DECLARED.
+tmpb="$(mktemp -d)"
+( cd "$tmpb" && git init -q -b main && git config user.email t@t && git config user.name t
+  mkdir -p src && echo 'export const x=1;' > src/a.ts
+  printf '#!/usr/bin/env bash\nwhile IFS= read -r f; do printf "S\\t%%s\\tfakeSym\\tfunction\\t7\\n" "$f"; done\nprintf "C\\tfakeSym\\tsrc/other.ts\\t42\\n"\n' > fake-backend.sh
+  chmod +x fake-backend.sh
+  printf '{"impact":{"backendCmd":"./fake-backend.sh"}}\n' > proofgate.json
+  git add -A && git commit -qm base
+  echo 'export const x=2;' > src/a.ts ) >/dev/null 2>&1
+( cd "$tmpb" && PROOFGATE_LIB="$LIB" bash "$IMPACT" --base HEAD </dev/null ) >/dev/null 2>&1
+if grep -q '"navigation_backend":"external:' "$tmpb/.git/proofgate-impact.json" 2>/dev/null \
+   && grep -q '"navigation_confidence":"high"' "$tmpb/.git/proofgate-impact.json" 2>/dev/null \
+   && grep -q 'fakeSym' "$tmpb/.git/proofgate-impact.json" 2>/dev/null; then
+  echo "PASS  impact: external backend honored + declared high"; PASS=$((PASS + 1))
+else echo "FAIL  impact: external backend not honored"; FAIL=$((FAIL + 1)); fi
+rm -rf "$tmpb"
+
+# Degradation must be DECLARED, never silent: with a ctags that is not Universal
+# (what macOS ships), navigation drops to grep and says so.
+tmpc="$(mktemp -d)"; fakebin="$(mktemp -d)"
+printf '#!/bin/sh\necho "Exuberant Ctags 5.8"\n' > "$fakebin/ctags"; chmod +x "$fakebin/ctags"
+( cd "$tmpc" && git init -q -b main && git config user.email t@t && git config user.name t
+  mkdir -p src && echo 'export const x=1;' > src/a.ts && git add -A && git commit -qm base
+  echo 'export function helper(){return 2}' > src/a.ts ) >/dev/null 2>&1
+( cd "$tmpc" && PATH="$fakebin:$PATH" PROOFGATE_LIB="$LIB" bash "$IMPACT" --base HEAD </dev/null ) >/dev/null 2>&1
+if grep -q '"navigation_backend":"grep"' "$tmpc/.git/proofgate-impact.json" 2>/dev/null \
+   && grep -q '"navigation_confidence":"low"' "$tmpc/.git/proofgate-impact.json" 2>/dev/null \
+   && grep -q '"no-ctags"' "$tmpc/.git/proofgate-impact.json" 2>/dev/null; then
+  echo "PASS  impact: non-Universal ctags → grep backend, declared"; PASS=$((PASS + 1))
+else echo "FAIL  impact: degradation not declared"; FAIL=$((FAIL + 1)); fi
+rm -rf "$tmpc" "$fakebin"
+
 echo "══ hooks ═══════════════════════════════════════════════════"
 optin()   { printf '{"pushGuard":true}\n' > proofgate.json; mkdir -p .proofgate && cp "$LIB" .proofgate/lib.sh; }
 optin_stop(){ printf '{"pushGuard":true,"stopGuard":true}\n' > proofgate.json; mkdir -p .proofgate && cp "$LIB" .proofgate/lib.sh; }
@@ -408,6 +557,24 @@ walk_case() { # walk_case <name> <parser-fn>
 command -v jq      >/dev/null 2>&1 && walk_case "walker: quoted key resolves (jq)"     jq_walk     || echo "SKIP  jq walker (no jq)"
 command -v node    >/dev/null 2>&1 && walk_case "walker: quoted key resolves (node)"   node_walk   || echo "SKIP  node walker (no node)"
 command -v python3 >/dev/null 2>&1 && walk_case "walker: quoted key resolves (python)" py_walk     || echo "SKIP  python walker (no python3)"
+
+echo "══ portability + docs (the promises we make about ourselves) ═"
+# CI runs macOS: bash 3.2 and BSD userland. Every one of these constructs works on
+# the dev box and fails there — which is the worst possible failure, because the
+# author sees green. Catch them here instead of in a red matrix job.
+BASH4=$(grep -nE 'declare -A|mapfile|readarray|\$\{[A-Za-z_]+(,,|\^\^)|sed -i |wait -n|date -d |readlink -f|grep -P|xargs -r|flock |EPOCHSECONDS|nproc' \
+  "$ROOT"/skills/proofgate/scripts/*.sh "$ROOT"/skills/proofgate/scripts/guards.d/*.sh "$ROOT"/hooks/*.sh "$ROOT/install.sh" 2>/dev/null \
+  | grep -v ':[0-9]*: *#' | grep -v 'proofgate-allow' || true)
+if [ -z "$BASH4" ]; then echo "PASS  portability: no bash4/GNU-only constructs"; PASS=$((PASS + 1))
+else echo "FAIL  portability: non-portable construct(s):"; printf '%s\n' "$BASH4" | sed 's/^/      /'; FAIL=$((FAIL + 1)); fi
+
+# The guard count is written in five places and was already wrong once (docs said
+# 18, guards.d held 19). Numbers a human maintains by hand drift; assert it.
+GN=$(find "$GUARDS" -name '*.sh' | grep -c . || true)
+DRIFT=$(grep -rlE "\b(1[0-9]|[2-9][0-9])[ ]?(diff )?guards" "$ROOT/README.md" "$ROOT/skills/proofgate/SKILL.md" "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$ROOT/action.yml" 2>/dev/null \
+  | while IFS= read -r f; do grep -oE "\b(1[0-9]|[2-9][0-9])[ ]?(diff )?guards" "$f" | grep -oE '^[0-9]+' | while IFS= read -r n; do [ "$n" = "$GN" ] || echo "$f says $n"; done; done)
+if [ -z "$DRIFT" ]; then echo "PASS  docs: guard count matches guards.d ($GN)"; PASS=$((PASS + 1))
+else echo "FAIL  docs: guard count drift (guards.d has $GN):"; printf '%s\n' "$DRIFT" | sed 's/^/      /'; FAIL=$((FAIL + 1)); fi
 
 echo "═════════════════════════════════════════════════════════════"
 echo "$PASS passed · $FAIL failed"

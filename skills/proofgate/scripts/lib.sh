@@ -118,7 +118,7 @@ pg_ignored() {
 # (rejectUnauthorized:false, <<<<<<<, key regexes); without this every guard would
 # fail the very commit that installs it. (Guards also carry inline `proofgate-allow`
 # on their pattern lines; this covers whole-file cases like the tests.)
-PG_SELF_EXCLUDE=(':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
+PG_SELF_EXCLUDE=(':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*/scripts/impact.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
 
 # pg_added_with_file [extra-pathspecs...] — stream "<file>\t<added-line>" for every
 # added line in $BASE..HEAD, minus the gate's own files and any line bearing the
@@ -148,3 +148,112 @@ pg_scan() {
 # NOTE: `grep -c` prints 0 AND exits 1 on no match, so we capture its stdout rather
 # than relying on exit status (a naive `grep -c . || echo 0` prints "0\n0").
 pg_count() { local n; n="$(grep -c . 2>/dev/null)"; printf '%s' "${n:-0}"; }
+
+# ── 3.0 helpers: hashing, JSON reading, git dirs, ledgers ─────────────────────
+# Everything below is bash 3.2 + BSD safe (CI runs macOS): no associative arrays,
+# no mapfile, no `sed -i`, no `date -d`, no sha1sum/shasum branching.
+
+# pg_sha1 [file] — content hash via git's own hasher, present wherever git is.
+# One code path on every platform (sha1sum/shasum/md5 differ in name AND output),
+# and the value is a real blob id, so anchors can be compared against `git ls-files -s`.
+# NOTE: pg_fingerprint deliberately does NOT use this — its hashes are already
+# baked into users' .proofgateignore files, and changing them would silently
+# un-suppress every existing exception.
+# Called WITH a path that does not exist it prints nothing — it must never fall
+# through to reading stdin, which would hang the caller waiting on a terminal.
+pg_sha1() {
+  if [ $# -gt 0 ]; then [ -f "$1" ] && git hash-object -- "$1" 2>/dev/null; return 0; fi
+  git hash-object --stdin 2>/dev/null
+}
+
+# pg_lines <file> — line count that is 0 (not empty, not "0\n0") for a missing or
+# empty file. `grep -c` prints 0 AND exits 1, so `grep -c . f || echo 0` emits TWO
+# zeros — the same trap pg_count documents, and it produced invalid JSON here.
+pg_lines() { local n; n="$(grep -c . "$1" 2>/dev/null)"; printf '%s' "${n:-0}"; }
+
+# pg_now / pg_epoch — UTC timestamp and seconds (portable; no GNU date flags).
+pg_now()   { date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown; }
+pg_epoch() { date +%s 2>/dev/null || echo 0; }
+
+# pg_git_dir — this checkout's git dir (per-worktree state: verdict, impact).
+# pg_common_dir — the shared one (state that must be identical across worktrees:
+# the cache, the experiment worktrees themselves). They differ inside a worktree.
+pg_git_dir()    { git rev-parse --git-dir 2>/dev/null || echo .git; }
+pg_common_dir() { git rev-parse --git-common-dir 2>/dev/null || pg_git_dir; }
+
+# pg_scalar <file> <key> — FIRST "key":"value" (or "key":bare) in a JSON file.
+# The hook contract is grep-parseable single-line JSON, and `sed 's/.*"k":"\(..\)".*/'`
+# is GREEDY — it silently returns the LAST match. Everything ProofGate reads back
+# from its own JSON goes through this instead, which takes the first.
+pg_scalar() {
+  local f="$1" k="$2" v
+  [ -f "$f" ] || return 0
+  v="$(grep -o "\"$k\":\"[^\"]*\"" "$f" 2>/dev/null | head -1 | sed -e "s/^\"$k\":\"//" -e 's/"$//')"
+  if [ -z "$v" ]; then
+    v="$(grep -o "\"$k\":[^,}\"]*" "$f" 2>/dev/null | head -1 | sed -e "s/^\"$k\"://")"
+  fi
+  printf '%s' "$v"
+}
+
+# pg_json <file> <jq-path> / pg_json_list <file> <jq-path> — cfg's walkers, aimed
+# at ANY json file (impact.json, memory.jsonl records, a proof note). Same
+# jq → node → python3 chain, same degrade-to-empty contract.
+pg_json()      { local f="$1"; shift; [ -f "$f" ] || return 0; PROOFGATE_CFG="$f" cfg "$@"; }
+pg_json_list() { local f="$1"; shift; [ -f "$f" ] || return 0; PROOFGATE_CFG="$f" cfg_list "$@"; }
+
+# pg_tree_hash — identity of the WORKING TREE (not just HEAD): HEAD sha + a hash of
+# the unstaged/staged diff + the untracked file list. Two runs with the same value
+# looked at exactly the same bytes, which is what a cache key has to mean. HEAD
+# alone would happily serve a cached answer for a file you just edited.
+pg_tree_hash() {
+  local head diff unt
+  head="$(git rev-parse HEAD 2>/dev/null || echo none)"
+  diff="$(git diff HEAD 2>/dev/null | pg_sha1)"
+  unt="$(git ls-files -o --exclude-standard 2>/dev/null | LC_ALL=C sort | pg_sha1)"
+  printf '%s' "$head-$diff-$unt" | pg_sha1
+}
+
+# pg_lock <name> / pg_unlock <name> — mkdir is the only atomic primitive available
+# everywhere (flock is Linux-only). Waits up to 5s, then reaps a lock whose mtime
+# is older than 30s: a crashed writer must never wedge the next run.
+pg_lock() {
+  local d; d="$(pg_common_dir)/proofgate-lock-$1"; local i=0
+  while ! mkdir "$d" 2>/dev/null; do
+    if [ -d "$d" ] && [ -z "$(find "$d" -maxdepth 0 -mmin -0.5 2>/dev/null)" ]; then rmdir "$d" 2>/dev/null; continue; fi
+    i=$((i + 1)); [ "$i" -gt 50 ] && return 1
+    sleep 0.1 2>/dev/null || sleep 1
+  done
+  return 0
+}
+pg_unlock() { rmdir "$(pg_common_dir)/proofgate-lock-$1" 2>/dev/null || true; }
+
+# pg_ledger_append <file> <json-object-without-closing-brace> — append one hash-
+# chained line. Every ledger writer goes through this; the `prev` field is the sha1
+# of the PREVIOUS line, so a line appended or edited by hand (an agent writing its
+# own evidence) breaks the chain and the engine's `ledger-chain` check FAILs.
+# This is tamper-EVIDENT, not tamper-proof: anything with a shell can recompute the
+# chain. What it removes is the cheap, deniable edit.
+pg_ledger_append() {
+  local f="$1" body="$2" prev=""
+  mkdir -p "$(dirname "$f")" 2>/dev/null
+  pg_lock "$(basename "$f")" || return 1
+  [ -f "$f" ] && prev="$(tail -1 "$f" 2>/dev/null | pg_sha1)"
+  printf '%s,"prev":"%s"}\n' "$body" "$prev" >> "$f"
+  pg_unlock "$(basename "$f")"
+}
+
+# pg_ledger_verify <file> — 0 = chain intact (or file absent). Prints the 1-based
+# number of the first line whose recorded `prev` is not the hash of the line before it.
+pg_ledger_verify() {
+  local f="$1" n=0 previous="" claimed actual
+  [ -f "$f" ] || return 0
+  while IFS= read -r line; do
+    n=$((n + 1))
+    claimed="$(printf '%s' "$line" | grep -o '"prev":"[^"]*"' | tail -1 | sed -e 's/^"prev":"//' -e 's/"$//')"
+    actual=""
+    [ -n "$previous" ] && actual="$(printf '%s\n' "$previous" | pg_sha1)"
+    if [ "$claimed" != "$actual" ]; then printf '%s' "$n"; return 1; fi
+    previous="$line"
+  done < "$f"
+  return 0
+}

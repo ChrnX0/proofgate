@@ -29,10 +29,24 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
       - name: Shell hygiene (blocking)
         run: |
+          # Globs, not a hand-maintained list: a script someone forgets to append
+          # here is a script that silently escapes linting — the exact class of
+          # quiet gap this repo exists to catch.
           shellcheck -S warning \
-            skills/proofgate/scripts/verify.sh \
-            skills/proofgate/scripts/lib.sh \
+            skills/proofgate/scripts/*.sh \
             skills/proofgate/scripts/guards.d/*.sh \
             hooks/*.sh \
             install.sh \
             tests/run-tests.sh
+
+  self-gate:
+    # ProofGate runs its own gate on its own diff. If the tool cannot pass the
+    # standard it sells, the standard is theater.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Universal Ctags (exercises the high-confidence navigation backend)
+        run: sudo apt-get update -qq && sudo apt-get install -y universal-ctags
+      - name: Gate this delivery
+        run: bash skills/proofgate/scripts/verify.sh --base origin/main

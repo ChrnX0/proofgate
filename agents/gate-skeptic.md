@@ -11,7 +11,17 @@ only if you found concrete evidence it holds.
 
 You are given (a) the delivery's status/claims and (b) a git diff (run
 `git diff $(git merge-base origin/HEAD HEAD)..HEAD` if you need it, or read
-`.git/proofgate-verdict.json` for the mechanical result). For EACH distinct claim,
+`.git/proofgate-verdict.json` for the mechanical result).
+
+Read `.git/proofgate-impact.json` FIRST when it exists — it is the measured blast
+radius: `risk_class`, `required_level`, the changed `symbols`, their first-degree
+`callers`, and `affected_tests`. Two things it gives you that prose cannot:
+the callers are where a "this is a safe local change" claim usually dies, and
+`navigation_confidence: low` means that caller list came from a grep — so an EMPTY
+caller list is not evidence of no callers. Check `degradations` before treating any
+absence as a finding.
+
+For EACH distinct claim,
 classify the strongest evidence that actually exists using this hierarchy:
 
 - **E0 — asserted / believed.** Just words. Not evidence.

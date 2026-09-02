@@ -5,7 +5,9 @@
     "typecheck": "pnpm typecheck",
     "lint": "pnpm lint",
     "test": "pnpm test",
-    "build": "pnpm build"
+    "build": "pnpm build",
+    "$comment_e2e": "e2e is not run by the gate — its PRESENCE is what tells ProofGate that E3 (the real flow, driven on a real runtime) is producible on this machine. Without it, and without smoke[], the gate reports max_achievable_level E2 rather than pretending E3 was merely skipped.",
+    "e2e": "pnpm e2e"
   },
 
   "coupledFiles": [
@@ -19,6 +21,16 @@
   "piiTerms": "password|ssn|cpf|credit.?card|cvv|phone|e-?mail|birth.?date|medical|diagnosis|address",
   "moneyTerms": "price|amount|total|balance|money|currency|cents|salary|payment|invoice|refund|fee|cost",
   "sourceGlobs": "src/|lib/|app/",
+
+  "$comment_impact": "Blast radius (impact.sh). sensitiveGlobs/sensitiveTerms decide which diffs are L3 — the class that demands an adversarial pass. Paths are the primary signal; terms are matched word-bounded on ADDED non-test lines and need two DISTINCT hits, so one `bearer` in a comment never escalates a typo fix. backendCmd is the LSP seam: a command that reads changed paths on stdin and prints S<TAB>file<TAB>symbol<TAB>kind<TAB>line and C<TAB>symbol<TAB>file<TAB>line — with it, navigation_confidence is `high` instead of `low`.",
+  "sensitiveGlobs": "(^|/)(auth|oauth|session|permission|acl|rbac|billing|payment|checkout|crypto|tls|ssl|cert|secret|migration)s?(/|[._-])",
+  "sensitiveTerms": "\\b(is_admin|isAdmin|bearer|jwt|refund|charge|amount_cents|private key|rejectUnauthorized|verify=False|ALTER TABLE|DROP TABLE|GRANT )",
+  "impact": {
+    "backendCmd": "",
+    "maxSymbols": 100,
+    "maxCallers": 500
+  },
+
   "envExample": ".env.example",
   "maxFileKb": 2048,
   "timeoutSeconds": 900,

@@ -1,5 +1,84 @@
 # Changelog
 
+## 2.7.0 — 2026-09-02
+
+The gate learns how big the change is.
+
+### Added
+
+- **`impact.sh` — the blast radius, computed before anything is judged.** Every run now
+  starts by measuring what the diff can break: the changed files, the symbols inside the
+  changed line ranges, their first-degree callers, the tests that touch those symbols,
+  and the direct importers. The measurement lands in `.git/proofgate-impact.json` and
+  drives everything downstream.
+
+  The scar is not a bug report — it is the shape of every gate that gets switched off.
+  A gate with one fixed price teaches the team that its ceremony is noise, because the
+  README edit and the migration to the payments table pay exactly the same toll. The
+  cheapest way to make ProofGate ignorable was to keep charging full price for a typo.
+  So the price is now proportional, and *proportional to what* is computed rather than
+  felt:
+
+  | Class | What it is | Evidence it owes |
+  |---|---|---|
+  | **L1** | docs, tests, config only | E1 |
+  | **L2** | source with callers | **E3** |
+  | **L3** | auth · money · migrations · crypto · permissions | **E3 + a mandatory adversarial pass** |
+
+  Two properties keep that from being theater. The range is the **whole branch plus the
+  working tree** — `merge-base..HEAD` *and* uncommitted edits — because a radius computed
+  on the tip would be gamed by the oldest trick there is: put the migration in commit one,
+  put a docs change in commit three, gate commit three. And "sensitive" is decided by
+  **content as well as path**, so money math filed under `utils/helpers.ts` is still L3.
+
+- **Declared degradation, everywhere.** With Universal Ctags on PATH, symbols come from a
+  real symbol table and the output says `navigation_confidence: high`. Without it — or with
+  the Exuberant ctags macOS ships — callers come from a word-boundary grep, confidence says
+  `low`, and a `degradations` list names exactly what could not be done. This matters more
+  than the feature it qualifies: an empty caller list from a low-confidence run means *"I
+  found none"*, not *"there are none"*, and a tool that lets you confuse those two is the
+  thing this project exists to stop. `impact.backendCmd` is the seam for a real language
+  server: a command that reads changed paths on stdin and prints symbols and callers back.
+  Point it at an LSP client and confidence becomes `high` without ProofGate pretending to
+  speak JSON-RPC.
+
+- **`max_achievable_level` — the difference between unproven and unprovable.** On a machine
+  with no e2e command, no `smoke[]`, and no dev server to curl, E3 cannot be produced at
+  all. Demanding it anyway would fail every delivery for a reason the author cannot fix,
+  which is how a gate earns an alias in someone's shell profile. The verdict now reports
+  what is *reachable* here, so "not proven" and "not provable on this box" stop being the
+  same sentence.
+
+- **Verdict v2, strictly additive.** `schemaVersion` is 2 and the document carries the
+  impact summary, `required_level`, `max_achievable_level` and `degradations`. The v1
+  prefix is byte-identical through `"pass"`, the file stays on one line, and it contains
+  **exactly one** `"sha":` and one `"pass":` — nested objects say `head_sha`/`base_sha`
+  instead. That is not fussiness: four readers parse this file with `sed`/`grep`, and one
+  of them is the pre-push hook `install.sh` already wrote into users' repositories, which
+  never updates itself. Their `sed` is greedy — a second `"sha"` anywhere in the document
+  would silently win. A test now pins the invariant.
+
+- **`caso_tool`** in the test harness: `caso_verify` generalized to any script, so every
+  tool from here on gets the same real fixture (real repo, real remote, real base). It
+  runs the tool with stdin closed — a tool that reads stdin by accident should fail a
+  test, not hang the suite.
+
+- **A portability test and a documentation test.** CI runs macOS (bash 3.2, BSD userland),
+  where `declare -A`, `mapfile`, `sed -i`, `date -d` and friends fail on a box where the
+  author saw green — the worst kind of failure. A grep over every shipped script now
+  catches them locally. And the guard count, written by hand in five files, was already
+  wrong: the docs said 18 while `guards.d` held 19. A number a human maintains drifts, so
+  it is asserted against `ls guards.d` instead.
+
+- **`self-gate` CI job.** ProofGate runs its own gate on its own diff, with Universal
+  Ctags installed so the high-confidence path is exercised rather than assumed. A tool
+  that cannot pass the standard it sells is selling theater.
+
+### Fixed
+
+- **Guard count drift in `SKILL.md`, `plugin.json`, `marketplace.json` and `action.yml`**
+  (18 → 19), found by the new test rather than by a reader.
+
 ## 2.6.0 — 2026-08-07
 
 `--only` can finally run the guard you just wrote.

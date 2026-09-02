@@ -12,6 +12,7 @@
 #   bash verify.sh --dry-run          # show what would run, run nothing
 #   bash verify.sh --base <ref>       # diff base (default: merge-base with origin default branch)
 #   bash verify.sh --report <file>    # also write a markdown report
+#   bash verify.sh --no-impact        # skip the blast-radius computation
 #
 # Exit codes: 0 = gate passed (warnings allowed unless --strict) · 1 = gate FAILED.
 #
@@ -26,7 +27,7 @@
 set -uo pipefail
 
 # ── flags ────────────────────────────────────────────────────────────────────
-BUILD=0 STRICT=0 DRY=0 JSON=0 SMOKE=0 ONLY="" BASE_REF="" REPORT=""
+BUILD=0 STRICT=0 DRY=0 JSON=0 SMOKE=0 ONLY="" BASE_REF="" REPORT="" NOIMPACT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --build) BUILD=1 ;;
@@ -37,6 +38,7 @@ while [ $# -gt 0 ]; do
     --only) shift; ONLY="${1:-}" ;;
     --base) shift; BASE_REF="${1:-}" ;;
     --report) shift; REPORT="${1:-}" ;;
+    --no-impact) NOIMPACT=1 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)" >&2; exit 1 ;;
   esac
@@ -46,6 +48,7 @@ done
 cd "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" || exit 1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUARDS_DIR="$SCRIPT_DIR/guards.d"
+IMPACT_SH="$SCRIPT_DIR/impact.sh"
 CFG="proofgate.json"
 export PROOFGATE_CFG="$CFG" PROOFGATE_LIB="$SCRIPT_DIR/lib.sh"
 # shellcheck source=/dev/null
@@ -87,6 +90,47 @@ run_step() { # run_step <label> <command...>
 }
 
 say "── ProofGate · mechanical gate ─────────────────────────────"
+
+# ── diff base, resolved ONCE and up front ────────────────────────────────────
+# It used to be resolved just before the guards. Impact has to know the range
+# before the first command runs (it decides the required evidence level, which the
+# verdict reports), and two places computing "the base" independently is exactly
+# the divergence this project keeps finding in other people's code.
+if [ -z "$BASE_REF" ]; then
+  DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+  [ -z "$DEFAULT_BRANCH" ] && for b in main master; do git rev-parse "origin/$b" >/dev/null 2>&1 && { DEFAULT_BRANCH="$b"; break; }; done
+  [ -n "$DEFAULT_BRANCH" ] && BASE_REF="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD 2>/dev/null || true)"
+fi
+
+# ── blast radius (impact.sh) ─────────────────────────────────────────────────
+# One measurement, many consumers: the required evidence level, whether a skeptic
+# pass is mandatory, what the skeptic reads, and which memory the change stales.
+# It is a NOTE, never a warning: a low-confidence backend is a fact about the
+# machine, not a defect in the delivery, and a warning printed on every run of
+# every repo without ctags would be wallpaper within a day.
+IMPACT_JSON="$(pg_git_dir 2>/dev/null || echo .git)/proofgate-impact.json"
+RISK="" REQUIRED_LEVEL="" MAX_LEVEL="" SKEPTIC_REQ="" NAV_BACKEND="" NAV_CONF="" IMPACT_DEGR=""
+if [ "$NOIMPACT" != 1 ] && [ -z "$ONLY" ] && [ -f "$IMPACT_SH" ] && command -v pg_scalar >/dev/null 2>&1; then
+  if [ "$DRY" = 1 ]; then
+    note "would compute impact (blast radius)" impact
+  else
+    with_timeout bash "$IMPACT_SH" ${BASE_REF:+--base "$BASE_REF"} </dev/null >/dev/null 2>&1 || true
+    if [ -f "$IMPACT_JSON" ]; then
+      RISK="$(pg_scalar "$IMPACT_JSON" risk_class)"
+      REQUIRED_LEVEL="$(pg_scalar "$IMPACT_JSON" required_level)"
+      MAX_LEVEL="$(pg_scalar "$IMPACT_JSON" max_achievable_level)"
+      SKEPTIC_REQ="$(pg_scalar "$IMPACT_JSON" skeptic_required)"
+      NAV_BACKEND="$(pg_scalar "$IMPACT_JSON" navigation_backend)"
+      NAV_CONF="$(pg_scalar "$IMPACT_JSON" navigation_confidence)"
+      IMPACT_DEGR="$(grep -o '"code":"[^"]*"' "$IMPACT_JSON" 2>/dev/null | sed -e 's/^"code":"//' -e 's/"$//' | tr '\n' ' ')"
+      export PROOFGATE_IMPACT="$IMPACT_JSON"
+      note "impact: ${RISK:-?} · $(pg_scalar "$IMPACT_JSON" files_n) file(s) · $(pg_scalar "$IMPACT_JSON" symbols_n) symbol(s) · $(pg_scalar "$IMPACT_JSON" callers_n) caller(s) · needs ${REQUIRED_LEVEL:-?} · nav ${NAV_BACKEND:-?} (${NAV_CONF:-?})${IMPACT_DEGR:+ · declared: $IMPACT_DEGR}" impact
+      if [ "$SKEPTIC_REQ" = "true" ]; then
+        note "impact: this diff is $RISK — an adversarial pass is REQUIRED before 'done' ($(pg_json "$IMPACT_JSON" '.risk_reasons[0]' 2>/dev/null | head -c 120))" impact-skeptic
+      fi
+    fi
+  fi
+fi
 
 # ── stack detection + configured commands ───────────────────────────────────
 PM=""
@@ -221,13 +265,7 @@ if [ "$SMOKE" = 1 ]; then
   fi
 fi
 
-# ── diff base + guards (guards.d/*.sh + config.guardsDirs, alphabetical) ──────
-if [ -z "$BASE_REF" ]; then
-  DEFAULT_BRANCH="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
-  [ -z "$DEFAULT_BRANCH" ] && for b in main master; do git rev-parse "origin/$b" >/dev/null 2>&1 && { DEFAULT_BRANCH="$b"; break; }; done
-  [ -n "$DEFAULT_BRANCH" ] && BASE_REF="$(git merge-base "origin/$DEFAULT_BRANCH" HEAD 2>/dev/null || true)"
-fi
-
+# ── guards (guards.d/*.sh + config.guardsDirs, alphabetical) ─────────────────
 FIRED=""   # guard names that produced a fail/warn (for the ledger)
 if [ -n "$BASE_REF" ] && [ "$BASE_REF" != "$(git rev-parse HEAD)" ]; then
   export PROOFGATE_BASE="$BASE_REF" PROOFGATE_STRICT="$STRICT"
@@ -301,7 +339,20 @@ if [ "$DRY" != 1 ] && [ -z "$ONLY" ]; then
   GD="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
   SHA="$(git rev-parse HEAD 2>/dev/null || echo unknown)"
   TS="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
-  VERDICT="{\"schemaVersion\":1,\"sha\":\"$SHA\",\"generatedAt\":\"$TS\",\"flags\":{\"build\":$([ "$BUILD" = 1 ] && echo true || echo false),\"strict\":$([ "$STRICT" = 1 ] && echo true || echo false),\"smoke\":$([ "$SMOKE" = 1 ] && echo true || echo false)},\"checks\":[$CHECK_JSON],\"fails\":$FAILS,\"warns\":$WARNS,\"pass\":$PASS_BOOL}"
+  # ── verdict v2 ─────────────────────────────────────────────────────────────
+  # ADDITIVE by contract. Four readers parse this file with grep/sed and none of
+  # them can be upgraded in place: hooks/push-guard.sh, hooks/stop-guard.sh, the
+  # pre-push hook install.sh WROTE INTO USERS' REPOS (it never updates itself), and
+  # tests/run-tests.sh. They do:
+  #     sed -n 's/.*"sha":"\([0-9a-f]\{7,40\}\)".*/\1/p'      ← GREEDY: last match wins
+  #     grep -q '"pass":true'
+  # So v2 keeps the v1 prefix byte-identical through "pass", stays on ONE line, and
+  # contains exactly ONE "sha": and ONE "pass": in the whole document. Everything
+  # nested says head_sha / base_sha / sha_ok instead. A test pins this.
+  VERDICT="{\"schemaVersion\":2,\"sha\":\"$SHA\",\"generatedAt\":\"$TS\",\"flags\":{\"build\":$([ "$BUILD" = 1 ] && echo true || echo false),\"strict\":$([ "$STRICT" = 1 ] && echo true || echo false),\"smoke\":$([ "$SMOKE" = 1 ] && echo true || echo false)},\"checks\":[$CHECK_JSON],\"fails\":$FAILS,\"warns\":$WARNS,\"pass\":$PASS_BOOL"
+  VERDICT="$VERDICT,\"impact\":{\"risk_class\":\"${RISK:-unknown}\",\"navigation_backend\":\"${NAV_BACKEND:-none}\",\"navigation_confidence\":\"${NAV_CONF:-none}\",\"skeptic_required\":${SKEPTIC_REQ:-false}}"
+  VERDICT="$VERDICT,\"required_level\":\"${REQUIRED_LEVEL:-unknown}\",\"max_achievable_level\":\"${MAX_LEVEL:-unknown}\""
+  VERDICT="$VERDICT,\"degradations\":[$(printf '%s' "${IMPACT_DEGR:-}" | awk '{for(i=1;i<=NF;i++) printf "%s\"%s\"", (i>1?",":""), $i}')]}"
   if [ -d "$GD" ]; then
     TMPV="$(mktemp "$GD/.proofgate-verdict.XXXXXX" 2>/dev/null || mktemp)"
     printf '%s\n' "$VERDICT" > "$TMPV" && mv "$TMPV" "$GD/proofgate-verdict.json"

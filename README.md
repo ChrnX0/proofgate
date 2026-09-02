@@ -55,10 +55,11 @@ Want it unbypassable? `bash install.sh --hook` → you literally cannot `git pus
 
 ## 🧠 What ProofGate actually is
 
-A **four-layer delivery gate** that sits between *"the code is written"* and *"the work is done"*:
+A **delivery gate** that sits between *"the code is written"* and *"the work is done"* — and that charges in proportion to what the change can break:
 
 | Layer | What | Who runs it |
 |---|---|---|
+| **0 · Blast radius** | what this diff can break — changed symbols, their callers, affected tests — over the **whole branch + your working tree**, classified **L1/L2/L3**. That class sets the price of the gate: docs pay E1, source pays E3, auth/money/migrations also pay a mandatory skeptic | a script — `impact.sh` |
 | **1 · Mechanical** | tests · lint · push state · **19 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, version-bumped-but-never-released, …) → a **SHA-bound verdict** | a script — `verify.sh` |
 | **2 · Judgment** | root cause + counter-proof · an **evidence hierarchy** (believed → static → tested → exercised → in-prod; "done" needs ≥ exercised) · **diagnosis as a falsifiable hypothesis** · brutally honest status | you (or your agent), **in writing** |
 | **3 · Adversarial** | a **default-refute skeptic** tries to break every "it works" claim against the diff | the `gate-skeptic` subagent |
@@ -187,6 +188,8 @@ False positive? Three escape hatches: a `proofgate-allow` comment on the line, a
     { "a": "src/lib/db.ts", "b": "db/schema.sql", "reason": "dev schema ↔ prod mirror" }
   ],
   "piiTerms": "password|ssn|cpf|credit.?card|phone|medical",
+  "sensitiveGlobs": "(^|/)(auth|billing|payment|migration)s?(/|[._-])",
+  "impact": { "backendCmd": "", "maxSymbols": 100, "maxCallers": 500 },
   "skip": ["sql-concat"],
   "severity": { "pii-logging": "fail" },
   "guardsDirs": [".proofgate-guards"],
@@ -196,9 +199,32 @@ False positive? Three escape hatches: a `proofgate-allow` comment on the line, a
 }
 ```
 
-Config reads with jq, node, **or** python3 — whichever exists (zero hard dependency). Flags: `--build` · `--strict` · `--smoke` · `--json` · `--only <guard>` · `--dry-run` · `--base <ref>` · `--report <file>`. `--only` searches the engine's guards **and** your `guardsDirs`, so you can iterate on a guard you just wrote without paying for a full run.
+Config reads with jq, node, **or** python3 — whichever exists (zero hard dependency). Flags: `--build` · `--strict` · `--smoke` · `--json` · `--only <guard>` · `--dry-run` · `--base <ref>` · `--report <file>` · `--no-impact`. `--only` searches the engine's guards **and** your `guardsDirs`, so you can iterate on a guard you just wrote without paying for a full run.
 
 `--base` defaults to the merge-base with your default branch. If you run the gate **after** merging the work into that branch, the base moves with it and the guards end up inspecting a docs-only diff — reporting "nothing touched" for changes you just shipped. ProofGate warns about that (`sourceless-diff`); pass `--base <sha before the work>` to re-run against the real range.
+
+### 🎯 Why the gate does not cost the same for every change
+
+A gate with one fixed price is a gate people switch off. So `impact.sh` measures the
+change before judging it, and the measurement decides the price:
+
+| Class | What it is | Owes |
+|---|---|---|
+| **L1** | docs, tests, config only | E1 (static) |
+| **L2** | source with callers | **E3** — the real flow, driven |
+| **L3** | auth · money · migrations · crypto · permissions | **E3 + a mandatory adversarial pass** |
+
+Two things make that hard to game. The radius is computed over the **whole branch plus
+your uncommitted work**, so hiding a migration in an earlier commit and gating the docs
+commit on top does not lower the class. And "sensitive" is decided by **content as well
+as path** — money math filed under `utils/helpers.ts` is still L3.
+
+It is also honest about its own eyesight. With Universal Ctags on PATH it reads a real
+symbol table (`navigation_confidence: high`); without it, callers come from a
+word-boundary grep and it says `low` — plus a `degradations` list naming what it could
+not do. An empty caller list from a low-confidence run means *"I did not find any"*, not
+*"there are none"*, and the output never lets you confuse the two. Point `impact.backendCmd`
+at a real language server and it hands the job over.
 
 ## ❓ FAQ
 
@@ -220,6 +246,7 @@ The guard design rule is *low false-positive above all* (see [CONTRIBUTING](CONT
 ## 🗺️ Roadmap
 
 - Per-workspace monorepo awareness (changed packages only)
+- A reference `impact.backendCmd` implementation (real LSP go-to-definition instead of ctags/grep)
 - Entropy-based secret detection
 - SARIF / rdjson export for code-scanning ingestion
 - Cross-model skeptic (a second model as independent auditor)
