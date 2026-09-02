@@ -1,6 +1,6 @@
 ---
 name: proofgate
-description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 19 diff guards) that computes the change's blast radius and writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
+description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 20 diff guards) that computes the change's blast radius and writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
 ---
 
 # ProofGate — acceptance with EVIDENCE, not hope
@@ -110,11 +110,34 @@ the repo at its image state. Nothing was attacking anything.
 **Observing an effect is not identifying an agent.** Before you write a cause anywhere
 durable (status, PR, postmortem, known-issues doc), run the loop:
 
+**Write it down, or it cannot be killed.** The loop below is now backed by a ledger
+(`scripts/hypothesis.sh`), for one reason: refutations do not survive a compaction. The
+summary keeps the code and drops "I checked the reflog, there was no reset" — because a
+negative result reads like nothing happened — and the dead explanation comes back, more
+convincing the second time because nothing visible contradicts it. The ledger lives on
+disk and a SessionStart hook re-injects it after every compaction.
+
 1. **Hypothesis** — the mechanism, in one sentence. *"A process runs `git reset` on the repo."*
+   → `hypothesis.sh open --kind bugfix --symptom <tag> --hypothesis "..."`
 2. **Falsifiable prediction** — if that were true, what MUST exist? *"A `reset` in the
    reflog; a process in `ps`; an entry in a log, cron or hook."*
 3. **Command** — the one that reveals that mark. Run it.
 4. **Read** — is the mark there? If NOT, the hypothesis is dead. Don't patch it. Replace it.
+   → `hypothesis.sh refute <id> --run "<cmd>"` records what was seen — including silence,
+   which is the whole point: "the predicted mark is ABSENT" is the result that closes a
+   branch of the search. Re-proposing that exact idea later is refused.
+
+**The bar inverting for external causes is now mechanical.** Refutations are counted per
+`--symptom`. Once the same symptom has survived two explanations, the next hypothesis on
+it is marked `escalated`, and the gate requires an adversarial pass before "done" — the
+third guess about a stubborn symptom is exactly where an invented culprit gets written
+down and hardens into folklore.
+
+**And the counter-proof comes first.** With `editGuard: true`, an open bugfix hypothesis
+with no failing test recorded blocks edits to source files. Not because you would forget
+— because at the moment of editing, the intention to write the test afterwards is
+completely sincere, and a suite that was green before your edit and green after it has
+proven that nothing else broke, not that the bug is gone.
 
 **The bar INVERTS for external causes.** When blame lands outside your own code — infra,
 platform, "flaky test", a third party, the environment — the standard goes UP, not down.

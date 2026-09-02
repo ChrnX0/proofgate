@@ -21,7 +21,14 @@ case "$INPUT" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 
 {
   ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
   { [ -f "$ROOT/proofgate.json" ] || [ -d "$ROOT/.proofgate" ]; } || exit 0
-  PG="$ROOT/skills/proofgate/scripts/lib.sh"; [ -f "$PG" ] || PG="$ROOT/.proofgate/lib.sh"
+  # lib.sh, in order: this repo's own source · what install.sh vendored · the copy that
+  # ships INSIDE this plugin. The third fallback matters: installed as a Claude Code
+  # plugin without ever running install.sh, the first two are absent, `cfg` is undefined,
+  # and every hook quietly exits 0 — a guard that silently does nothing is worse than no
+  # guard, because the repo believes it is protected.
+  PG="$ROOT/skills/proofgate/scripts/lib.sh"
+  [ -f "$PG" ] || PG="$ROOT/.proofgate/lib.sh"
+  [ -f "$PG" ] || PG="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../skills/proofgate/scripts" 2>/dev/null && pwd)/lib.sh"
   # shellcheck source=/dev/null
   [ -f "$PG" ] && PROOFGATE_CFG="$ROOT/proofgate.json" . "$PG" 2>/dev/null
   command -v cfg >/dev/null 2>&1 || exit 0

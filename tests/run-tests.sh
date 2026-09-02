@@ -346,7 +346,7 @@ caso_verify "engine: --no-impact skips it"                        0 setup_clean 
 echo "══ impact: the blast radius ════════════════════════════════"
 IMPACT="$ROOT/skills/proofgate/scripts/impact.sh"
 ij()  { cat "$(git rev-parse --git-dir)/proofgate-impact.json"; }
-ihas() { ij | grep -q "$1"; }
+ihas() { local j; j="$(ij)"; printf '%s' "$j" | grep -q "$1"; }
 setup_docs()     { echo "# notes" > NOTES.md; }
 setup_caller()   { mkdir -p src
                    printf 'export function parsePrice(r){ return Number(r) }\n' > src/price.ts
@@ -499,7 +499,8 @@ rm -rf "$tmpg"
 tmpe="$(mktemp -d)"
 ( cd "$tmpe" && git init -q -b main && git config user.email t@t && git config user.name t
   echo one > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
-if ( cd "$tmpe" && PROOFGATE_LIB="$LIB" bash "$CLAIM" render </dev/null 2>&1 ) | grep -q "VERIFIED: NOTHING"; then
+EOUT="$( cd "$tmpe" && PROOFGATE_LIB="$LIB" bash "$CLAIM" render </dev/null 2>&1 )"
+if printf '%s' "$EOUT" | grep -q "VERIFIED: NOTHING"; then
   echo "PASS  claim: no claims → render says NOTHING"; PASS=$((PASS + 1))
 else echo "FAIL  claim: empty ledger did not render as NOTHING"; FAIL=$((FAIL + 1)); fi
 rm -rf "$tmpe"
@@ -554,6 +555,116 @@ tmpf="$(mktemp -d)"
 code=0; ( cd "$tmpf"; printf '%s' "$(ev 'git push origin main')" | bash "$ROOT/hooks/push-guard.sh" ) >/dev/null 2>&1 || code=$?
 if [ "$code" = 0 ]; then echo "PASS  push-guard: fresh+pass → allow (exit 0)"; PASS=$((PASS+1)); else echo "FAIL  push-guard: fresh+pass → expected 0 got $code"; FAIL=$((FAIL+1)); fi
 rm -rf "$tmpf"
+
+echo "══ hypotheses: what you already ruled out ══════════════════"
+HYPO="$ROOT/skills/proofgate/scripts/hypothesis.sh"
+hy_repo() { # a repo with a hypothesis ledger, echoed as its path
+  local tmp; tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t \
+      && echo one > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
+  printf '%s' "$tmp"
+}
+hy() { ( cd "$1" && PROOFGATE_LIB="$LIB" bash "$HYPO" "${@:2}" </dev/null 2>&1 ); }
+hy_code() { local d="$1"; shift; local c=0; ( cd "$d" && PROOFGATE_LIB="$LIB" bash "$HYPO" "$@" </dev/null ) >/dev/null 2>&1 || c=$?; printf '%s' "$c"; }
+ok_t() { if [ "$1" = 1 ]; then echo "PASS  $2"; PASS=$((PASS + 1)); else echo "FAIL  $2"; FAIL=$((FAIL + 1)); fi; }
+
+D="$(hy_repo)"
+hy "$D" open --kind diagnosis --symptom flake --hypothesis "A daemon runs git reset on the repo" >/dev/null
+HID="$(hy "$D" list --open | awk '{print $1}' | head -1)"
+ok_t "$([ -n "$HID" ] && echo 1 || echo 0)" "hypothesis: open → listed as open"
+ok_t "$([ "$(hy_code "$D" confirm "$HID")" = 2 ] && echo 1 || echo 0)" "hypothesis: confirm with no evidence → refused"
+hy "$D" refute "$HID" --run "git reflog | grep -q reset" >/dev/null
+# NOTE: capture first, then grep the VARIABLE. `producer | grep -q x` under
+# `set -o pipefail` reports failure even on a match: grep exits at the first hit,
+# the producer dies of SIGPIPE, and pipefail promotes that to the pipeline's status.
+# A passing check that looks like a failure is exactly the kind of noise that trains
+# people to ignore red.
+REFUTED="$(hy "$D" list --refuted)"
+ok_t "$(printf '%s' "$REFUTED" | grep -q "$HID" && echo 1 || echo 0)" "hypothesis: refute --run records the observation"
+# Silence IS the observation: a `grep -q` probe that finds nothing is what kills an idea.
+ok_t "$(printf '%s' "$REFUTED" | grep -q "ABSENT" && echo 1 || echo 0)" "hypothesis: an absent mark is recorded, not left blank"
+# Re-proposing the same idea (case/whitespace insensitive) is refused...
+ok_t "$([ "$(hy_code "$D" open --kind diagnosis --hypothesis "a daemon   runs GIT RESET on the repo")" = 2 ] && echo 1 || echo 0)" \
+     "hypothesis: re-proposing a refuted idea → refused"
+# ...but a genuinely different idea is not.
+ok_t "$([ "$(hy_code "$D" open --kind diagnosis --hypothesis "The container is recycled between steps")" = 0 ] && echo 1 || echo 0)" \
+     "hypothesis: a different idea is still allowed (negative)"
+ok_t "$([ "$(hy_code "$D" reopen "$HID")" = 2 ] && echo 1 || echo 0)" "hypothesis: reopen without --new-evidence → refused"
+ok_t "$([ "$(hy_code "$D" reopen "$HID" --new-evidence "the daemon now exists on this host")" = 0 ] && echo 1 || echo 0)" \
+     "hypothesis: reopen with new evidence → allowed"
+rm -rf "$D"
+
+# Strike escalation: the SKILL's "the bar inverts for external causes", mechanised.
+D2="$(hy_repo)"
+hy "$D2" open --kind diagnosis --symptom stuck --hypothesis "explanation one" >/dev/null
+H1="$(hy "$D2" list --open | awk '{print $1}' | head -1)"; hy "$D2" refute "$H1" --observed "ruled out" >/dev/null
+hy "$D2" open --kind diagnosis --symptom stuck --hypothesis "explanation two" >/dev/null
+H2="$(hy "$D2" list --open | awk '{print $1}' | head -1)"; hy "$D2" refute "$H2" --observed "also ruled out" >/dev/null
+THIRD="$(hy "$D2" open --kind diagnosis --symptom stuck --hypothesis "explanation three")"
+ok_t "$(printf '%s' "$THIRD" | grep -q ESCALATED && echo 1 || echo 0)" "hypothesis: third try on one symptom → ESCALATED"
+ok_t "$(grep -q '"escalated":true' "$D2/.git/proofgate-hypotheses.jsonl" && echo 1 || echo 0)" "hypothesis: escalation is recorded in the ledger"
+( cd "$D2" && mkdir -p src && echo 'export const x=1;' > src/a.ts && git add -A && git commit -qm c ) >/dev/null 2>&1
+( cd "$D2" && PROOFGATE_LIB="$LIB" bash "$ROOT/skills/proofgate/scripts/impact.sh" --base HEAD~1 --no-cache </dev/null ) >/dev/null 2>&1
+ok_t "$(grep -q '"skeptic_required":true' "$D2/.git/proofgate-impact.json" && echo 1 || echo 0)" "hypothesis: escalation forces skeptic_required in impact"
+# A symptom with ONE refutation must NOT escalate — the threshold has to mean something.
+D3="$(hy_repo)"
+hy "$D3" open --kind diagnosis --symptom once --hypothesis "single idea" >/dev/null
+H3="$(hy "$D3" list --open | awk '{print $1}' | head -1)"; hy "$D3" refute "$H3" --observed "ruled out" >/dev/null
+SECOND="$(hy "$D3" open --kind diagnosis --symptom once --hypothesis "second idea")"
+ok_t "$(printf '%s' "$SECOND" | grep -q ESCALATED && echo 0 || echo 1)" "hypothesis: one refutation does NOT escalate (negative)"
+rm -rf "$D2" "$D3"
+
+# ── 93-hypothesis-required ────────────────────────────────────────────────────
+plant_fixbranch()   { git checkout -qb fix/login 2>/dev/null; echo 'export const x=2;' > a.ts; }
+plant_featbranch()  { git checkout -qb feat/new 2>/dev/null; echo 'export const x=2;' > a.ts; }
+plant_fixwithhyp()  { git checkout -qb fix/login 2>/dev/null; echo 'export const x=2;' > a.ts
+                      mkdir -p .git; printf '{"id":"h-1","event":"open","kind":"bugfix"}\n' > .git/proofgate-hypotheses.jsonl; }
+caso "hypothesis-required: fix branch, empty ledger → WARN" 2 93-hypothesis-required.sh plant_fixbranch
+caso "hypothesis-required: feature branch → pass"           0 93-hypothesis-required.sh plant_featbranch
+caso "hypothesis-required: fix branch WITH a hypothesis → pass" 0 93-hypothesis-required.sh plant_fixwithhyp
+
+echo "══ edit-guard + session-hook ═══════════════════════════════"
+EG="$ROOT/hooks/edit-guard.sh"; SH="$ROOT/hooks/session-hook.sh"
+eg_repo() { # <editGuard-true?> <open-bugfix?> <red-test?>
+  local tmp; tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t
+    printf '{"editGuard":%s}\n' "$1" > proofgate.json
+    mkdir -p src && echo 'export const x=1;' > src/a.ts && git add -A && git commit -qm base
+    [ "$2" = yes ] && printf '{"id":"h-1","ts":"t","event":"open","kind":"bugfix","hypothesis":"off by one","cmd":"npm test -- x"}\n' > .git/proofgate-hypotheses.jsonl
+    [ "$3" = yes ] && printf '{"id":"c-1","sha":"x","kind":"red-test","hypothesis":"h-1","evidence":{"exit":1}}\n' > .git/proofgate-claims.jsonl
+    true ) >/dev/null 2>&1
+  printf '%s' "$tmp"
+}
+eg_run() { local d="$1" f="$2" c=0
+  ( cd "$d" && printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$f" | bash "$EG" ) >/dev/null 2>&1 || c=$?
+  printf '%s' "$c"; }
+E1="$(eg_repo true yes no)"; E2="$(eg_repo true yes yes)"; E3="$(eg_repo false yes no)"; E4="$(eg_repo true no no)"
+ok_t "$([ "$(eg_run "$E1" src/a.ts)" = 2 ] && echo 1 || echo 0)" "edit-guard: open bugfix, no red test → BLOCK"
+ok_t "$([ "$(eg_run "$E1" src/a.test.ts)" = 0 ] && echo 1 || echo 0)" "edit-guard: the test file itself → allow"
+ok_t "$([ "$(eg_run "$E1" README.md)" = 0 ] && echo 1 || echo 0)" "edit-guard: docs → allow"
+ok_t "$([ "$(eg_run "$E2" src/a.ts)" = 0 ] && echo 1 || echo 0)" "edit-guard: red test recorded → allow"
+ok_t "$([ "$(eg_run "$E3" src/a.ts)" = 0 ] && echo 1 || echo 0)" "edit-guard: editGuard:false → allow (opt-in)"
+ok_t "$([ "$(eg_run "$E4" src/a.ts)" = 0 ] && echo 1 || echo 0)" "edit-guard: no hypothesis at all → allow"
+# The block message must actually REACH the agent. It did not for four releases: the
+# fail-open `2>/dev/null` wrapper ate it, so a refusal arrived with no reason attached.
+MSG="$( cd "$E1" && printf '{"tool_name":"Edit","tool_input":{"file_path":"src/a.ts"}}' | bash "$EG" 2>&1 1>/dev/null )"
+ok_t "$(printf '%s' "$MSG" | grep -q "red-test" && echo 1 || echo 0)" "edit-guard: the refusal explains itself on stderr"
+c=0; ( cd "$E1" && printf 'not json' | bash "$EG" ) >/dev/null 2>&1 || c=$?
+ok_t "$([ "$c" = 0 ] && echo 1 || echo 0)" "edit-guard: malformed stdin → fail-open"
+c=0; ( cd "$E1" && printf '{"tool_name":"Edit","tool_input":{"file_path":"src/a.ts"}}' | PROOFGATE_HOOK_OFF=1 bash "$EG" ) >/dev/null 2>&1 || c=$?
+ok_t "$([ "$c" = 0 ] && echo 1 || echo 0)" "edit-guard: PROOFGATE_HOOK_OFF → allow"
+
+# push-guard's message had the same bug; pin it too.
+PMSG="$( cd "$E1" && printf '{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}' | bash "$ROOT/hooks/push-guard.sh" 2>&1 1>/dev/null )"
+ok_t "$(printf '%s' "$PMSG" | grep -q "push blocked" && echo 1 || echo 0)" "push-guard: the refusal explains itself on stderr"
+
+# session-hook: the refuted list has to come BACK after a compaction.
+SOUT="$( cd "$E1" && printf '{"source":"compact"}' | bash "$SH" 2>/dev/null )"
+ok_t "$(printf '%s' "$SOUT" | grep -q "additionalContext" && echo 1 || echo 0)" "session-hook: compact → injects context"
+ok_t "$(printf '%s' "$SOUT" | grep -q "off by one" && echo 1 || echo 0)" "session-hook: the open hypothesis survives the compaction"
+SEMPTY="$(cd "$E4" && rm -f .git/proofgate-hypotheses.jsonl; cd "$E4" && printf '{"source":"startup"}' | bash "$SH" 2>/dev/null)"
+ok_t "$([ -z "$SEMPTY" ] && echo 1 || echo 0)" "session-hook: nothing to say → silent (negative)"
+rm -rf "$E1" "$E2" "$E3" "$E4"
 
 echo "══ mutate: mutation as proof of test ════════════════════════"
 # The two cases CONTRIBUTING requires: it must FIRE on the sin (a test that

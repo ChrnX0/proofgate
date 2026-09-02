@@ -1,5 +1,81 @@
 # Changelog
 
+## 2.9.0 — 2026-09-02
+
+A hypothesis outlives the context window.
+
+### Added
+
+- **`hypothesis.sh` — an append-only ledger of what was tried and what it ruled out.**
+  The SKILL has always taught the loop: mechanism, falsifiable prediction, the command
+  that reveals the mark, read the result. What it could not do is make the RESULT
+  survive. A long investigation produces refutations — *"checked the reflog, no reset"*,
+  *"there is no cache step in this pipeline at all"* — and those are the most valuable
+  thing it produces, because each one closes a branch of the search space. Then the
+  context is compacted. The summary keeps the code and the goal and drops the negative
+  results, because they read like nothing happened. The next turn proposes the dead
+  explanation again, and it is *more* convincing the second time, since nothing visible
+  contradicts it.
+
+  Refutations now live on disk. Silence is recorded as the observation it is (`the
+  predicted mark is ABSENT`), `confirm` and `refute` both require evidence, and
+  re-proposing an already-refuted idea is refused with the date and what killed it.
+  Re-wording still gets through — that limit is stated in the file rather than implied
+  away, and re-injection is what covers it.
+
+- **`hooks/session-hook.sh` (SessionStart: startup · resume · compact)** re-injects the
+  open hypotheses, the refuted ones, unresolved lessons and any mode left on. This is
+  the half that makes the ledger matter: state on disk that nobody thinks to read is
+  not memory.
+
+- **Strike escalation — the SKILL's "the bar inverts for external causes", mechanised.**
+  Refutations are counted per `--symptom`. Once the same symptom has survived two
+  explanations (`hypothesis.strikeThreshold`), the next hypothesis on it is marked
+  `escalated`, and `impact.sh` turns that into `skeptic_required`. The third guess about
+  a stubborn symptom is precisely where an invented culprit gets written down and
+  hardens into folklore, and "effect observed, cause unknown" is the better record.
+
+- **`hooks/edit-guard.sh` (PreToolUse: Edit|Write|MultiEdit, opt-in `editGuard`)** —
+  the counter-proof, enforced first. With an open bugfix hypothesis and no red-test claim
+  behind it, editing a non-test source file is blocked, with the exact command to run.
+  It exists because *first* is the part a prompt cannot enforce: at the moment of
+  editing, the intention to write the test afterwards is completely sincere. A suite that
+  was green before the edit and green after it proved that nothing else broke — not that
+  the bug is gone. Off by default, and honest about its limit: an edit made through Bash
+  never reaches a PreToolUse hook, so this raises the cost of skipping the counter-proof,
+  it does not make skipping impossible.
+
+- **`guards.d/93-hypothesis-required.sh`** — WARN when a fix branch carries no hypothesis
+  at all. A cause that is never written down is never falsified; it just gets implemented,
+  and the root-cause section ends up written backwards from the change that was made.
+
+- **`/proofgate:preflight`** — measure the radius, recall what the project already knows
+  about these files, name the E3 observation, open the hypothesis. All four are things
+  that are impossible or dishonest to do afterwards.
+
+### Fixed
+
+- **Hooks blocked with no reason attached — since 2.0.** Every hook wraps its body in
+  `{ ... } 2>/dev/null` so a broken guard can never wedge the agent. That same redirect
+  ate the block message. The contract says "exit 2 blocks and feeds stderr back to the
+  agent"; what the agent actually received was a bare refusal and no explanation — the
+  exact silent failure this project exists to forbid, shipped in the component whose job
+  is to forbid it. Deliberate output now goes to a descriptor dup'd before the wrapper,
+  and a test asserts the message reaches stderr.
+
+- **Hooks silently did nothing when installed as a plugin without vendoring.** They
+  looked for `lib.sh` in the repo's own source or in `.proofgate/`, and a repo that has
+  neither — the normal case for `/plugin marketplace add` — left `cfg` undefined, so
+  every hook exited 0. A guard that quietly does nothing is worse than no guard, because
+  the repo believes it is protected. All four hooks now fall back to the copy that ships
+  inside the plugin.
+
+- **A `pipefail` + `grep -q` trap in the test suite.** `producer | grep -q x` reports
+  failure even on a match: grep exits at the first hit, the producer dies of SIGPIPE, and
+  `pipefail` promotes that to the pipeline's status. Three passing checks looked like
+  failures. Captured first, then matched — noted in the tests, because a check that
+  cries wolf is how people learn to ignore red.
+
 ## 2.8.0 — 2026-09-02
 
 The report is rendered, not written.
