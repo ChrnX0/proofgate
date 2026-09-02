@@ -58,6 +58,24 @@ The proof travels with the commit.
 
 ### Fixed
 
+- **`edit-notice` was silent on macOS.** A repo created under `mktemp -d` lives at
+  `/var/folders/...` while `git rev-parse --show-toplevel` resolves the symlink to
+  `/private/var/folders/...`, so stripping the root prefix from the edited file's path
+  left it ABSOLUTE. `memory.sh recall` matched nothing (anchors are repo-relative) and
+  the notice came back empty — the failure mode being *no output*, which is
+  indistinguishable from "nothing to say". Paths are now compared physically
+  (`pwd -P` on both sides), and a file resolving outside the repository exits early
+  instead of guessing.
+
+  Worth naming twice: the live-guard half of the same hook appeared to work, because an
+  absolute pathspec made it scan the whole working tree instead of the edited file. It
+  produced the right answer for the wrong reason, which is the kind of pass that hides a
+  defect rather than proving its absence.
+
+  Caught by the macOS CI matrix — the exact platform this delivery's own status block
+  declared as NOT TESTED. The regression test reproduces the condition with a symlinked
+  repo root, so it is pinned on every platform rather than only on the one that found it.
+
 - **Committing orphaned the evidence.** Claims were keyed to the HEAD sha at the moment
   they were recorded, so `git commit` silently detached every claim made before it. The
   natural order of work — do it, prove it, commit it, gate it — produced a delivery whose

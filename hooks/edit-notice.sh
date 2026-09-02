@@ -57,8 +57,21 @@ except Exception:pass' 2>/dev/null)"
     exit 0
   fi
   [ -n "$FP" ] || exit 0
-  # Paths arrive absolute; the ledgers and git speak repo-relative.
-  REL="${FP#"$ROOT"/}"
+
+  # Paths arrive absolute; the ledgers and git speak repo-relative. Strip the prefix
+  # using the PHYSICAL path of both, because on macOS they routinely differ: a repo
+  # under `mktemp -d` sits at /var/folders/... while `git rev-parse --show-toplevel`
+  # resolves the symlink to /private/var/folders/..., so a plain prefix strip leaves the
+  # path absolute. `memory.sh recall` then matched nothing (anchors are repo-relative)
+  # and the notice was silently empty — caught by the macOS CI matrix, on the one platform
+  # this delivery declared as NOT TESTED. The live-guard half only "worked" because an
+  # absolute pathspec made it scan the whole tree instead of the edited file.
+  ROOT_P="$(cd "$ROOT" 2>/dev/null && pwd -P)"; ROOT_P="${ROOT_P:-$ROOT}"
+  FP_DIR="$(cd "$(dirname "$FP")" 2>/dev/null && pwd -P)"
+  if [ -n "$FP_DIR" ]; then REL="${FP_DIR}/$(basename "$FP")"; else REL="$FP"; fi
+  REL="${REL#"$ROOT_P"/}"
+  # Still absolute means the file is outside this repository — nothing here applies.
+  case "$REL" in /*) exit 0 ;; esac
 
   SCRIPTS="$ROOT/skills/proofgate/scripts"
   [ -d "$SCRIPTS" ] || SCRIPTS="$ROOT/.proofgate"

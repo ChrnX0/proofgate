@@ -776,6 +776,26 @@ ok_t "$(printf '%s' "$(en_run "$N1")" | grep -q "secrets:" && echo 1 || echo 0)"
 N2="$(en_repo false no)"
 ( cd "$N2" && printf 'export const x=1;\nconst k = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";\n' > src/a.ts )
 ok_t "$([ -z "$(en_run "$N2")" ] && echo 1 || echo 0)" "edit-notice: liveGuards off and no memory → silent (negative)"
+# The macOS-only bug, reproduced anywhere. On macOS a repo under `mktemp -d` lives at
+# /var/folders/... while `git rev-parse --show-toplevel` resolves the symlink to
+# /private/var/folders/..., so stripping the root prefix left an ABSOLUTE path: memory
+# recall matched nothing (anchors are repo-relative) and the notice was silently empty.
+# A symlinked root reproduces exactly that on Linux, so the fix is pinned on every
+# platform rather than only on the one that caught it.
+NREAL="$(mktemp -d)"; NLINK="$(mktemp -u)"; ln -s "$NREAL" "$NLINK"
+( cd "$NLINK" && git init -q -b main && git config user.email t@t && git config user.name t
+  printf '{"liveGuards":true}\n' > proofgate.json
+  mkdir -p src && echo 'export const x=1;' > src/a.ts && git add -A && git commit -qm base
+  mkdir -p .proofgate
+  printf '{"id":"m-1","ts":"t","event":"add","ref":null,"fact":"a.ts owns the cache","class":"decision","provenance":"human","anchors":[{"path":"src/a.ts","blob":"%s","line":0,"line_sha":""}],"created_sha":"x","ttl_diffs":20,"guard":null,"resolves":null,"via":"t","prev":""}\n' \
+    "$(git hash-object src/a.ts)" > .proofgate/memory.jsonl ) >/dev/null 2>&1
+SYMOUT="$( cd "$NLINK" && printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/a.ts"}}' "$NLINK" | bash "$EN" 2>/dev/null )"
+ok_t "$(printf '%s' "$SYMOUT" | grep -q "owns the cache" && echo 1 || echo 0)" \
+     "edit-notice: a symlinked repo root still resolves the file (macOS /private/var)"
+OUTSIDE="$( cd "$NLINK" && printf '{"tool_name":"Edit","tool_input":{"file_path":"/etc/hosts"}}' | bash "$EN" 2>/dev/null )"
+ok_t "$([ -z "$OUTSIDE" ] && echo 1 || echo 0)" "edit-notice: a file outside the repo → silent (negative)"
+rm -rf "$NREAL" "$NLINK"
+
 rm -rf "$N1" "$N2"
 
 # install --uninstall must not take the team's committed memory with it.
