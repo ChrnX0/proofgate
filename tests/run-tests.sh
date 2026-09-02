@@ -127,11 +127,17 @@ plant_pem()    { printf -- '-----BEGIN RSA PRIVATE KEY-----\nx\n' > key.pem; }
 plant_generic(){ echo 'const client_secret = "abcdef0123456789ABCDEFXYZ";' > cfg.ts; }
 plant_ph()     { echo 'const token = "your_token_here_example_val";' > cfg.ts; }
 plant_clean()  { echo 'export const soma = (a, b) => a + b;' > ok.ts; }
+# The ouroboros, found by the self-gate on its own 2.7.0 diff: suppressing a finding
+# means writing the offending pattern into .proofgateignore (to say WHICH finding),
+# which then trips the same guard. ProofGate's own control file is never scanned.
+plant_ignorefile() { echo 'export const ok = 1;' > ok.ts
+                     printf '# suppressing rejectUnauthorized: false in a vendored fixture\ntls-off:x.ts:abc123def456\n' > .proofgateignore; }
 caso "secrets: GitHub token → FAIL"              1 10-secrets.sh plant_token
 caso "secrets: private key → FAIL"               1 10-secrets.sh plant_pem
 caso "secrets: generic assignment → WARN"        2 10-secrets.sh plant_generic
 caso "secrets: placeholder value → pass"         0 10-secrets.sh plant_ph
 caso "secrets: clean diff → pass"                0 10-secrets.sh plant_clean
+caso "tls-off: .proofgateignore naming the pattern → pass" 0 15-tls-off.sh plant_ignorefile
 
 # ── 12-merge-markers ──────────────────────────────────────────────────────────
 plant_merge()  { printf 'ok\n%s%s HEAD\n' '<<<' '<<<<' > a.ts; }   # split so tests/ isn't a sin

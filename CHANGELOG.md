@@ -79,6 +79,18 @@ The gate learns how big the change is.
 - **Guard count drift in `SKILL.md`, `plugin.json`, `marketplace.json` and `action.yml`**
   (18 → 19), found by the new test rather than by a reader.
 
+- **`.proofgateignore` is no longer scanned by the guards.** Found by the self-gate on
+  this very release, and it is an ouroboros worth naming: suppressing a finding requires
+  writing the offending pattern into the ignore file — that is how you say *which*
+  finding — and the guards then flagged the suppression file. Every escape hatch that
+  forces you to quote what you are escaping has this bug; ProofGate's own control files
+  are now excluded like the rest of its source.
+
+- **The sensitive-term scan reads source files only.** Also found by the self-gate: a
+  README, a changelog and an annotated config example that DESCRIBE the term list were
+  escalating this release to L3 for the crime of documenting what L3 means. Terms are a
+  signal about code, not about prose.
+
 ## 2.6.0 — 2026-08-07
 
 `--only` can finally run the guard you just wrote.

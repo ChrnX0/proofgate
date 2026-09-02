@@ -118,7 +118,11 @@ pg_ignored() {
 # (rejectUnauthorized:false, <<<<<<<, key regexes); without this every guard would
 # fail the very commit that installs it. (Guards also carry inline `proofgate-allow`
 # on their pattern lines; this covers whole-file cases like the tests.)
-PG_SELF_EXCLUDE=(':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*/scripts/impact.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
+# `.proofgateignore` is ProofGate's own control file: every line in it NAMES a
+# finding, and its comments explain which pattern was suppressed and why. Scanning
+# it made suppressing a finding create a new one in the suppression file — found by
+# this gate on its own 2.7.0 diff. Safe for consumers too: the file is always ours.
+PG_SELF_EXCLUDE=(':(exclude).proofgateignore' ':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*/scripts/impact.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
 
 # pg_added_with_file [extra-pathspecs...] — stream "<file>\t<added-line>" for every
 # added line in $BASE..HEAD, minus the gate's own files and any line bearing the
