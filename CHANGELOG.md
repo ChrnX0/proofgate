@@ -86,6 +86,15 @@ The gate learns how big the change is.
   forces you to quote what you are escaping has this bug; ProofGate's own control files
   are now excluded like the rest of its source.
 
+- **`sourceless-diff` now reads the impact measurement instead of re-deriving it.**
+  The engine had two different rules for "how much source is in this diff" — impact's
+  file classification, and a narrower path-glob-plus-extension heuristic in the
+  blind-gate check. On this repository they disagreed completely: impact reported 17
+  source files while the check announced the guards had been looking at nothing. A
+  warning that contradicts the line printed four seconds earlier teaches people to
+  ignore both. One measurement, read by both; the old heuristic survives only as the
+  fallback for `--no-impact` and for vendored copies without `impact.sh`.
+
 - **The sensitive-term scan reads source files only.** Also found by the self-gate: a
   README, a changelog and an annotated config example that DESCRIBE the term list were
   escalating this release to L3 for the crime of documenting what L3 means. Terms are a

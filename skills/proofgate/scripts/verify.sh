@@ -309,11 +309,22 @@ EOF
   # exactly when the delivery was just published. Guards cannot catch this themselves —
   # from inside a guard an empty diff is indistinguishable from a clean one. Only the
   # engine knows how big the diff it handed them was.
-  SRC_GLOBS="$(cfg '.sourceGlobs')"; SRC_GLOBS="${SRC_GLOBS:-src/|lib/|app/}"
-  SRC_IN_DIFF=$(git diff --name-only "$BASE_REF"..HEAD 2>/dev/null \
-    | grep -Ev '(guards\.d/|^\.proofgate/)' \
-    | grep -E "($SRC_GLOBS)" \
-    | grep -Ec '\.(ts|tsx|js|jsx|py|rb|go|rs|java|kt|swift|cs|php)$' || true)
+  # "How much source is in this diff" is now measured ONCE, by impact.sh, and read
+  # back here. It used to be re-derived with a second, narrower rule — a path glob
+  # plus a shorter extension list — and the two disagreed: on this very repo impact
+  # reported 17 source files while this check reported none, so a gate that had just
+  # measured the change announced it had been looking at nothing. Deriving both from
+  # one source is the SKILL's own level-5 fix; the old heuristic stays only as the
+  # fallback for --no-impact and for a vendored copy without impact.sh.
+  if [ -n "${RISK:-}" ] && [ -f "$IMPACT_JSON" ]; then
+    SRC_IN_DIFF="$(pg_scalar "$IMPACT_JSON" source_n)"
+  else
+    SRC_GLOBS="$(cfg '.sourceGlobs')"; SRC_GLOBS="${SRC_GLOBS:-src/|lib/|app/}"
+    SRC_IN_DIFF=$(git diff --name-only "$BASE_REF"..HEAD 2>/dev/null \
+      | grep -Ev '(guards\.d/|^\.proofgate/)' \
+      | grep -E "($SRC_GLOBS)" \
+      | grep -Ec '\.(ts|tsx|js|jsx|py|rb|go|rs|java|kt|swift|cs|php)$' || true)
+  fi
   if [ "${SRC_IN_DIFF:-0}" -eq 0 ]; then
     warn "sourceless-diff: the guarded diff has NO source file (docs/config only). If you just promoted this work, the diff guards above are BLIND — their ✅ means 'nothing to look at', not 'nothing wrong'. Re-run with --base <sha before the block>." "sourceless-diff"
   fi
