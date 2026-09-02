@@ -91,6 +91,8 @@ run_step() { # run_step <label> <command...>
 }
 
 say "── ProofGate · mechanical gate ─────────────────────────────"
+[ -f "$(pg_git_dir 2>/dev/null || echo .git)/proofgate-mode" ] && \
+  note "PROTOTYPE MODE is on — the edit- and stop-guards are relaxed and claims are capped at E1. This verdict records mode:prototype; the push is still gated." mode
 
 # ── diff base, resolved ONCE and up front ────────────────────────────────────
 # It used to be resolved just before the guards. Impact has to know the range
@@ -420,6 +422,8 @@ if [ "$DRY" != 1 ] && [ -z "$ONLY" ]; then
   VERDICT="$VERDICT,\"impact\":{\"risk_class\":\"${RISK:-unknown}\",\"navigation_backend\":\"${NAV_BACKEND:-none}\",\"navigation_confidence\":\"${NAV_CONF:-none}\",\"skeptic_required\":${SKEPTIC_REQ:-false}}"
   VERDICT="$VERDICT,\"required_level\":\"${REQUIRED_LEVEL:-unknown}\",\"max_achievable_level\":\"${MAX_LEVEL:-unknown}\""
   VERDICT="$VERDICT,\"degradations\":[$(printf '%s' "${IMPACT_DEGR:-}" | awk '{for(i=1;i<=NF;i++) printf "%s\"%s\"", (i>1?",":""), $i}')]"
+  PG_MODE=normal; [ -f "$(pg_git_dir)/proofgate-mode" ] && PG_MODE=prototype
+  VERDICT="$VERDICT,\"mode\":\"$PG_MODE\""
   VERDICT="$VERDICT,\"achieved_level\":\"${ACHIEVED_LEVEL:-unknown}\",\"proof\":{\"status\":\"$PROOF_STATUS\",\"missing\":\"$(pg_json_escape "$PROOF_MISSING")\"},\"chain_ok\":$CHAIN_OK}"
   if [ -d "$GD" ]; then
     TMPV="$(mktemp "$GD/.proofgate-verdict.XXXXXX" 2>/dev/null || mktemp)"

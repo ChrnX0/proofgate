@@ -101,6 +101,14 @@ except Exception:pass' 2>/dev/null)"
     fi
   fi
 
+  # Prototype mode explicitly does NOT relax this one. Exploring freely is fine;
+  # pushing unproven work is the single thing the tool exists to prevent, and a mode
+  # that turned the push gate off would just be the bypass with a friendlier name.
+  if [ -f "$GD/proofgate-mode" ]; then
+    echo "ProofGate: push blocked — prototype mode relaxes the edit- and stop-guards, NOT the push. Anything claimed while it was on is capped at E1. Leave the mode (\`mode.sh off\`), run the gate, record the evidence, then push." >&3
+    exit 2
+  fi
+
   # 6) Block with an actionable reason.
   GATE="bash .proofgate/verify.sh"; [ -f "$ROOT/.proofgate/verify.sh" ] || GATE="the ProofGate skill / verify.sh"
   echo "ProofGate: push blocked — no fresh passing verdict for HEAD ${HEAD_SHA:0:7}. Run \`$GATE\` (it must pass), then push. Bypass: pushGuard:false in proofgate.json, or PROOFGATE_HOOK_OFF=1." >&3

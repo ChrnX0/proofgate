@@ -1,5 +1,58 @@
 # Changelog
 
+## 2.11.0 — 2026-09-02
+
+Experiments where they cannot hurt; prototypes that cannot hide.
+
+### Added
+
+- **`experiment.sh` — every hypothesis gets its own git worktree.** Testing an idea means
+  changing something, running, and changing it back, and *changing it back* is where this
+  goes wrong. Three experiments in a row leave a working tree nobody can characterise:
+  some edits reverted, some not, one half-applied — and the next result describes a state
+  that was never designed. The classic ending is a "fix" that works only because of a
+  leftover from experiment two.
+
+  Each run is isolated and cleaned up, and the result is recorded against the hypothesis
+  **by the script**, not typed afterwards by whoever remembers what happened — the same
+  rule as the claims ledger, for the same reason. `--dirty` carries uncommitted work in,
+  because an experiment about the change you are making would otherwise silently run
+  against the code as it was before you made it.
+
+  `--parallel` is what the isolation buys: independent ideas can be tested at once.
+  Sequential testing was never a requirement, only a consequence of having one working
+  tree. `--in-place` exists for what a worktree cannot serve, and is honest about the
+  cost — the tree is hashed before and after, and a mutation is recorded as
+  `tree-mutated`, because a result from a run that altered the tree describes a state
+  that no longer exists.
+
+  It never closes the hypothesis for you. An experiment produces an observation; what it
+  MEANS is the judgment this tool refuses to fake.
+
+- **Prototype mode (`mode.sh`, `hooks/prompt-hook.sh`) — real, and impossible to forget.**
+  Sometimes you are exploring and the full ceremony is genuinely the wrong price. A tool
+  that refuses to admit that gets bypassed wholesale, and a bypassed gate protects
+  nothing at all. So the mode is real: the edit-guard and stop-guard stand down.
+
+  The danger was never the mode; it is forgetting you are in it and then reporting relaxed
+  work as if it had been gated. So it is loud in four places at once — a banner on **every
+  prompt**, a line at every session start including after a compaction, `mode` in the
+  verdict, and claims capped at E1 with the status block prefixed `UNVERIFIED PROTOTYPE`.
+  Repetition is the feature here; everywhere else in this repo it would be a defect.
+
+  Two things it deliberately does not do. **The push-guard is not relaxed** — exploring
+  freely is fine, shipping unproven work is the one thing the tool exists to stop, and a
+  mode that turned that off would be the bypass with a friendlier name. And it **does not
+  expire on its own**: an auto-expiry would end the mode quietly, at a moment nobody
+  observed, making the status of any given piece of work a question of timing.
+
+### Fixed
+
+- **Parallel experiments collided.** The worktree path was composed from the clock and
+  `$$`, and two jobs started in the same second share the parent's PID — so the second
+  worktree failed to create and its experiment was lost. Uniqueness has to be atomic
+  (`mktemp`), not merely likely. Three concurrent jobs are now a test.
+
 ## 2.10.0 — 2026-09-02
 
 Memory anchored to code, not to prose.

@@ -36,6 +36,12 @@ case "$INPUT" in *'"stop_hook_active":true'*|*'"stop_hook_active": true'*) exit 
   [ "$(cfg '.stopGuard' 2>/dev/null)" = "true" ] || exit 0
 
   GD="$(git rev-parse --git-dir 2>/dev/null)" || exit 0
+  # Prototype mode stands this guard down deliberately — exploration is a legitimate
+  # phase, and a tool that refuses to admit that gets bypassed wholesale. It is safe
+  # because the mode is impossible to be in unknowingly: a banner every prompt, a line
+  # every session start, `mode` in the verdict, claims capped at E1, and the status
+  # block prefixed UNVERIFIED PROTOTYPE. The PUSH guard is not relaxed.
+  [ -f "$GD/proofgate-mode" ] && exit 0
   V="$GD/proofgate-verdict.json"; HEAD_SHA="$(git rev-parse HEAD 2>/dev/null)"
   if [ -f "$V" ]; then
     VSHA="$(sed -n 's/.*"sha":"\([0-9a-f]\{7,40\}\)".*/\1/p' "$V" 2>/dev/null | head -1)"

@@ -67,6 +67,12 @@
   },
   "liveGuards": false,
 
+  "$comment_experiment": "experiment.sh runs a hypothesis in its own git worktree so nothing leaks between attempts — link names the dependency directories worth symlinking in rather than reinstalling per experiment.",
+  "experiment": {
+    "link": ["node_modules", ".venv", "target", "vendor"],
+    "timeoutSeconds": 900
+  },
+
   "$comment_hooks": "The plugin's push-guard (PreToolUse) refuses `git push` without a fresh passing verdict; set pushGuard:false to disable. stopGuard (opt-in, default off) makes the Stop hook refuse 'done' without one.",
   "pushGuard": true,
   "stopGuard": false

@@ -786,6 +786,86 @@ ok_t "$([ -f "$U/.proofgate/memory.jsonl" ] && echo 1 || echo 0)" "install: --un
 ok_t "$([ -f "$U/.proofgate/verify.sh" ] && echo 0 || echo 1)" "install: --uninstall still removes the machinery"
 rm -rf "$U"
 
+echo "══ experiments + prototype mode ════════════════════════════"
+EXP="$ROOT/skills/proofgate/scripts/experiment.sh"; MODE="$ROOT/skills/proofgate/scripts/mode.sh"
+xp_repo() {
+  local tmp; tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t
+    mkdir -p src && printf 'export const limit = 10;\n' > src/cfg.ts && git add -A && git commit -qm base
+    PROOFGATE_LIB="$LIB" bash "$HYPO" open --kind diagnosis --symptom perf \
+      --hypothesis "the limit of 10 is the bottleneck" --cmd "grep limit src/cfg.ts" ) >/dev/null 2>&1
+  printf '%s' "$tmp"
+}
+xp() { ( cd "$1" && PROOFGATE_LIB="$LIB" bash "$EXP" "${@:2}" </dev/null 2>&1 ); }
+X1="$(xp_repo)"
+XID="$( cd "$X1" && PROOFGATE_LIB="$LIB" bash "$HYPO" list --open </dev/null 2>/dev/null | awk '{print $1}' | head -1 )"
+xc=0; ( cd "$X1" && PROOFGATE_LIB="$LIB" bash "$EXP" h-nope -- "echo hi" ) >/dev/null 2>&1 || xc=$?
+ok_t "$([ "$xc" = 2 ] && echo 1 || echo 0)" "experiment: unknown hypothesis → refused"
+ok_t "$(printf '%s' "$(xp "$X1" "$XID" -- "cat src/cfg.ts")" | grep -q "limit = 10" && echo 1 || echo 0)" \
+     "experiment: runs the command in a worktree"
+ok_t "$([ "$(ls "$X1/.git/proofgate-exp" 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && echo 1 || echo 0)" \
+     "experiment: the worktree is removed afterwards"
+ok_t "$(grep -q '"event":"experiment"' "$X1/.git/proofgate-hypotheses.jsonl" && echo 1 || echo 0)" \
+     "experiment: the result is recorded against the hypothesis"
+# Without --dirty the worktree is HEAD: an experiment about the change you are making
+# would otherwise silently run against the code as it was before you made it.
+( cd "$X1" && printf 'export const limit = 999;\n' > src/cfg.ts )
+ok_t "$(printf '%s' "$(xp "$X1" "$XID" -- "cat src/cfg.ts")" | grep -q "999" && echo 0 || echo 1)" \
+     "experiment: without --dirty it sees the committed state (negative)"
+ok_t "$(printf '%s' "$(xp "$X1" "$XID" --dirty -- "cat src/cfg.ts")" | grep -q "999" && echo 1 || echo 0)" \
+     "experiment: --dirty carries the uncommitted work in"
+ok_t "$(printf '%s' "$(xp "$X1" "$XID" -- "exit 3")" | grep -q "exit 3" && echo 1 || echo 0)" \
+     "experiment: a failing command records its exit code"
+# It must never close the hypothesis: an experiment is an observation, not a verdict.
+ok_t "$(printf '%s' "$( cd "$X1" && PROOFGATE_LIB="$LIB" bash "$HYPO" list --open </dev/null 2>/dev/null)" | grep -q "$XID" && echo 1 || echo 0)" \
+     "experiment: never auto-confirms the hypothesis (negative)"
+# Parallel jobs must not collide: composing a path from the clock and $$ produced the
+# SAME name for two jobs started in one second, and the second worktree failed.
+PAR="$(xp "$X1" --parallel "$XID::echo one; sleep 1" "$XID::echo two; sleep 1" "$XID::echo three; sleep 1")"
+ok_t "$([ "$(printf '%s' "$PAR" | grep -c 'experiment: exit 0' | tr -d ' ')" = 3 ] && echo 1 || echo 0)" \
+     "experiment: --parallel runs three at once without colliding"
+ok_t "$([ "$(ls "$X1/.git/proofgate-exp" 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && echo 1 || echo 0)" \
+     "experiment: parallel runs leave no worktrees behind"
+INP="$(xp "$X1" "$XID" --in-place -- "echo mutated > scratch.txt")"
+ok_t "$(printf '%s' "$INP" | grep -q "tree-mutated" && echo 1 || echo 0)" \
+     "experiment: --in-place declares that the run changed the tree"
+rm -rf "$X1"
+
+# ── prototype mode ───────────────────────────────────────────────────────────
+md_repo() {
+  local tmp; tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t
+    printf '{"stopGuard":true,"editGuard":true}\n' > proofgate.json
+    mkdir -p src && echo 'export const x=1;' > src/a.ts && git add -A && git commit -qm base
+    printf '{"id":"h-1","ts":"t","event":"open","kind":"bugfix","hypothesis":"x","cmd":"t"}\n' > .git/proofgate-hypotheses.jsonl ) >/dev/null 2>&1
+  printf '%s' "$tmp"
+}
+hookrc() { local d="$1" h="$2" j="$3" c=0; ( cd "$d" && printf '%s' "$j" | bash "$ROOT/hooks/$h" ) >/dev/null 2>&1 || c=$?; printf '%s' "$c"; }
+D1="$(md_repo)"
+EDIT_EV='{"tool_name":"Edit","tool_input":{"file_path":"src/a.ts"}}'
+PUSH_EV='{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}'
+ok_t "$([ "$(hookrc "$D1" edit-guard.sh "$EDIT_EV")" = 2 ] && echo 1 || echo 0)" "mode: before — the edit-guard blocks"
+( cd "$D1" && PROOFGATE_LIB="$LIB" bash "$MODE" on ) >/dev/null 2>&1
+ok_t "$([ -f "$D1/.git/proofgate-mode" ] && echo 1 || echo 0)" "mode: on writes the marker"
+ok_t "$([ "$(hookrc "$D1" edit-guard.sh "$EDIT_EV")" = 0 ] && echo 1 || echo 0)" "mode: the edit-guard stands down"
+STOPOUT="$( cd "$D1" && printf '{}' | bash "$ROOT/hooks/stop-guard.sh" 2>/dev/null )"
+ok_t "$(printf '%s' "$STOPOUT" | grep -q '"decision":"block"' && echo 0 || echo 1)" "mode: the stop-guard stands down"
+# The one that must NOT relax. A mode that turned this off would be the bypass renamed.
+ok_t "$([ "$(hookrc "$D1" push-guard.sh "$PUSH_EV")" = 2 ] && echo 1 || echo 0)" "mode: the PUSH is still blocked"
+PBANNER="$( cd "$D1" && printf '{}' | bash "$ROOT/hooks/prompt-hook.sh" 2>/dev/null )"
+ok_t "$(printf '%s' "$PBANNER" | grep -q "PROTOTYPE MODE" && echo 1 || echo 0)" "mode: every prompt carries the banner"
+CAP="$( cd "$D1" && PROOFGATE_LIB="$LIB" bash "$CLAIM" add --claim "works" --level E3 --run "cat src/a.ts" --expect "const x" </dev/null 2>&1 )"
+ok_t "$(printf '%s' "$CAP" | grep -q "prototype-mode" && echo 1 || echo 0)" "mode: claims are capped at E1 while it is on"
+RND="$( cd "$D1" && PROOFGATE_LIB="$LIB" bash "$CLAIM" render </dev/null 2>&1 )"
+ok_t "$(printf '%s' "$RND" | grep -q "UNVERIFIED PROTOTYPE" && echo 1 || echo 0)" "mode: the status block says so"
+( cd "$D1" && PROOFGATE_LIB="$LIB" bash "$MODE" off ) >/dev/null 2>&1
+ok_t "$([ "$(hookrc "$D1" edit-guard.sh "$EDIT_EV")" = 2 ] && echo 1 || echo 0)" "mode: off restores the full gate"
+PB2="$( cd "$D1" && printf '{}' | bash "$ROOT/hooks/prompt-hook.sh" 2>/dev/null )"
+ok_t "$([ -z "$PB2" ] && echo 1 || echo 0)" "mode: off → the prompt hook is silent (negative)"
+rm -rf "$D1"
+a_mode_normal() { grep -q '"mode":"normal"' "$(git rev-parse --git-dir)/proofgate-verdict.json"; }
+caso_verify "engine: verdict records the mode" 0 setup_clean a_mode_normal
+
 echo "══ mutate: mutation as proof of test ════════════════════════"
 # The two cases CONTRIBUTING requires: it must FIRE on the sin (a test that
 # cannot see its own subject) and stay SILENT on the clean case (a test that
