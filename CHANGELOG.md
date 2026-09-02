@@ -1,5 +1,67 @@
 # Changelog
 
+## 2.10.0 — 2026-09-02
+
+Memory anchored to code, not to prose.
+
+### Added
+
+- **`memory.sh` — project memory that can be shown to have gone stale.** The obvious
+  version of this feature is a notes file, and the obvious version is worse than nothing.
+  A note that was true in March is indistinguishable from one that is true now, and the
+  reader — usually a model with no way to check — treats both as fact. The failure mode
+  is not forgetting. It is remembering something that stopped being true, confidently,
+  and building on it.
+
+  Every fact is ANCHORED to a file plus the blob hash that file had when it was recorded,
+  and staleness is **derived at read time, never stored**. That difference does more work
+  than it looks: there is nothing to keep in sync so nothing can drift out of sync, no
+  write on the hot path of editing, and no field an agent can flip to make an
+  inconvenient fact look current. It is the SKILL's own level 5 — derive from a single
+  source and divergence becomes impossible rather than discouraged.
+
+  Classes expire differently because they mean different things: a **decision** holds
+  until revoked, an **inference** expires when the code it read has moved, an
+  **incident** never expires. An *agent's* `decision` expires like the inference it
+  really is (`memory.agentDecisionsExpire`) — otherwise an agent makes its own conclusion
+  permanent policy by choosing a label.
+
+- **The lesson loop, closed.** The SKILL's ladder says only a guard or a test stands on
+  its own, and that stopping at "prose in a doc" is the anti-pattern. Now a recorded
+  incident OPENS a lesson, and `98-unlearned-lessons` says so on every run until
+  something at level 4 answers it — a guard carrying `proofgate-lesson: <id>`, a
+  regression test, or an explicit `--resolves`. A comment in a README deliberately does
+  not count, and a test pins that: it is level 2 wearing level 4's clothes, which is the
+  exact confusion the ladder exists to name.
+
+- **`97-memory-stale`** — WARN only when a stale fact is anchored to a file *in this
+  diff*. That restriction is the feature: warning about every stale fact in the
+  repository on every run is wallpaper within a week, and wallpaper is how a gate stops
+  being read.
+
+- **`hooks/edit-notice.sh` (PostToolUse) — the guards, brought forward to the moment of
+  the edit.** The gate is deliberately a gate: it judges the finished diff. That timing
+  is right for a verdict and wrong for feedback. A pasted credential, a
+  `rejectUnauthorized: false` added to make a cert error go away, a `.only` left on a
+  test — each is an undo in the ten seconds after writing it and a rotation or a rewrite
+  by the time the gate runs. The guards are `git diff | grep`; there was never a reason
+  for that answer to wait. It also recalls any memory anchored to the file being edited.
+  Never blocks, opt-in per half (`liveGuards`, and a memory file existing).
+
+- **`pg_added_lines`** in lib.sh: the added-lines view three guards had each hand-rolled.
+  Sharing it is not tidiness — the hand-rolled copies silently opted those guards out of
+  live mode, so `secrets`, `pii-logging` and `debug-leftovers` could not run at edit time
+  at all. Live coverage is partial by construction (guards that build their own range see
+  an empty one) and the code says so: silence there means "nothing this path can see",
+  never "clean".
+
+### Fixed
+
+- **`install.sh --uninstall` deleted the team's project memory.** It did `rm -rf` on
+  `.proofgate/`, which now holds committed content — `memory.jsonl`, `lessons.jsonl`,
+  sometimes years of it — next to the disposable vendored machinery. Removing a tool
+  should never take institutional knowledge with it. Now preserved, announced, and tested.
+
 ## 2.9.0 — 2026-09-02
 
 A hypothesis outlives the context window.

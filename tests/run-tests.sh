@@ -666,6 +666,126 @@ SEMPTY="$(cd "$E4" && rm -f .git/proofgate-hypotheses.jsonl; cd "$E4" && printf 
 ok_t "$([ -z "$SEMPTY" ] && echo 1 || echo 0)" "session-hook: nothing to say → silent (negative)"
 rm -rf "$E1" "$E2" "$E3" "$E4"
 
+echo "══ memory: anchored to code, not to prose ══════════════════"
+MEM="$ROOT/skills/proofgate/scripts/memory.sh"
+mem_repo() {
+  local tmp; tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t
+    mkdir -p src && printf 'export const rate = 0.15;\n' > src/pricing.ts
+    printf 'export const db = 1;\n' > src/db.ts
+    git add -A && git commit -qm base ) >/dev/null 2>&1
+  printf '%s' "$tmp"
+}
+mm() { ( cd "$1" && PROOFGATE_LIB="$LIB" bash "$MEM" "${@:2}" </dev/null 2>&1 ); }
+mm_code() { local d="$1"; shift; local c=0; ( cd "$d" && PROOFGATE_LIB="$LIB" bash "$MEM" "$@" </dev/null ) >/dev/null 2>&1 || c=$?; printf '%s' "$c"; }
+
+M1="$(mem_repo)"
+# A fact with nothing to anchor it to can never be shown to have gone stale, which is
+# the only property that makes stored memory safe to read.
+ok_t "$([ "$(mm_code "$M1" add --fact "we use kafka" --class decision)" = 2 ] && echo 1 || echo 0)" \
+     "memory: no --anchor → refused"
+mm "$M1" add --fact "the 0.15 rate is contractual" --class decision --provenance human --anchor src/pricing.ts >/dev/null
+mm "$M1" add --fact "db.ts assumes a single writer" --class inference --provenance agent --anchor src/db.ts >/dev/null
+LST="$(mm "$M1" list)"
+ok_t "$(printf '%s' "$LST" | grep -q "contractual" && echo 1 || echo 0)" "memory: add → listed"
+ok_t "$(printf '%s' "$LST" | grep -cq "stale" && echo 0 || echo 1)" "memory: untouched anchors stay valid (negative)"
+REC="$(mm "$M1" recall src/pricing.ts)"
+ok_t "$(printf '%s' "$REC" | grep -q "contractual" && echo 1 || echo 0)" "memory: recall by path finds the fact"
+ok_t "$(printf '%s' "$REC" | grep -q "single writer" && echo 0 || echo 1)" "memory: recall does not return other files' facts (negative)"
+
+# Move the code the inference was about: the anchor drifts, and the fact is stale.
+( cd "$M1" && printf 'export const db = 2;\n' > src/db.ts && git add -A && git commit -qm change ) >/dev/null 2>&1
+LST2="$(mm "$M1" list)"
+ok_t "$(printf '%s' "$LST2" | grep -q "stale" && echo 1 || echo 0)" "memory: anchor drift → derived stale"
+ok_t "$(printf '%s' "$LST2" | grep -q "contractual" && printf '%s' "$LST2" | grep "contractual" | grep -q valid && echo 1 || echo 0)" \
+     "memory: the untouched fact is still valid (negative)"
+REC2="$(mm "$M1" recall src/db.ts)"
+ok_t "$(printf '%s' "$REC2" | grep -q "STALE" && echo 1 || echo 0)" "memory: recall marks the stale fact loudly"
+
+# An AGENT's "decision" expires like the inference it really is — otherwise an agent
+# could make its own conclusion permanent policy by choosing a class.
+M2="$(mem_repo)"
+mm "$M2" add --fact "agent-decided invariant" --class decision --provenance agent --anchor src/db.ts >/dev/null
+( cd "$M2" && printf 'export const db = 9;\n' > src/db.ts && git add -A && git commit -qm change ) >/dev/null 2>&1
+ok_t "$(printf '%s' "$(mm "$M2" list)" | grep -q "stale" && echo 1 || echo 0)" "memory: an agent's 'decision' expires like an inference"
+# An incident never expires — that is the entire point of a scar.
+M3="$(mem_repo)"
+mm "$M3" add --fact "float rounding cost 3c an invoice for a week" --class incident --provenance human --anchor src/db.ts >/dev/null
+( cd "$M3" && printf 'export const db = 9;\n' > src/db.ts && git add -A && git commit -qm change ) >/dev/null 2>&1
+ok_t "$(printf '%s' "$(mm "$M3" list)" | grep -q "valid" && echo 1 || echo 0)" "memory: an incident never goes stale (negative)"
+ok_t "$([ "$(mm_code "$M3" revoke m-nope --reason x)" = 2 ] && echo 1 || echo 0)" "memory: revoking an unknown id → refused"
+
+# The lesson loop: an incident opens a lesson, and it stays open until something ENFORCES it.
+ok_t "$([ -f "$M3/.proofgate/lessons.jsonl" ] && echo 1 || echo 0)" "lessons: an incident opens a lesson"
+LID="$( cd "$M3" && PROOFGATE_LIB="$LIB" . "$LIB" && pg_lessons_open | awk '{print $1}' | head -1 )"
+ok_t "$([ -n "$LID" ] && echo 1 || echo 0)" "lessons: the new lesson is open"
+mm "$M3" add --fact "documented in the pricing README" --class decision --provenance human --anchor src/db.ts --resolves "$LID" >/dev/null
+LEFT="$( cd "$M3" && PROOFGATE_LIB="$LIB" . "$LIB" && pg_lessons_open )"
+ok_t "$([ -z "$LEFT" ] && echo 1 || echo 0)" "lessons: --resolves closes it"
+rm -rf "$M1" "$M2" "$M3"
+
+# ── 97-memory-stale / 98-unlearned-lessons ───────────────────────────────────
+plant_stalemem() {
+  mkdir -p src .proofgate && printf 'export const db = 1;\n' > src/db.ts
+  git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+  printf '{"id":"m-1","ts":"t","event":"add","ref":null,"fact":"db assumes one writer","class":"inference","provenance":"agent","anchors":[{"path":"src/db.ts","blob":"0000000000000000000000000000000000000000","line":0,"line_sha":""}],"created_sha":"x","ttl_diffs":20,"guard":null,"resolves":null,"via":"t","prev":""}\n' > .proofgate/memory.jsonl
+  printf 'export const db = 2;\n' > src/db.ts
+}
+plant_validmem() {
+  mkdir -p src .proofgate && printf 'export const other = 1;\n' > src/other.ts
+  printf 'export const db = 1;\n' > src/db.ts
+  git add -A >/dev/null 2>&1; git commit -qm seed >/dev/null 2>&1
+  printf '{"id":"m-1","ts":"t","event":"add","ref":null,"fact":"db assumes one writer","class":"inference","provenance":"agent","anchors":[{"path":"src/db.ts","blob":"%s","line":0,"line_sha":""}],"created_sha":"x","ttl_diffs":20,"guard":null,"resolves":null,"via":"t","prev":""}\n' "$(git hash-object src/db.ts)" > .proofgate/memory.jsonl
+  printf 'export const other = 2;\n' > src/other.ts
+}
+caso "memory-stale: stale fact anchored to a changed file → WARN" 2 97-memory-stale.sh plant_stalemem
+caso "memory-stale: fact valid, other file changed → pass"       0 97-memory-stale.sh plant_validmem
+caso "memory-stale: no memory at all → pass"                     0 97-memory-stale.sh plant_clean
+
+plant_openlesson()  { echo 'x' > a.ts; mkdir -p .proofgate
+                      printf '{"id":"L-1","ts":"t","event":"open","source":"incident","ref":"m-1","head_sha":"x","text":"float rounding","resolved_by":null,"until":0,"prev":""}\n' > .proofgate/lessons.jsonl; }
+plant_donelesson()  { plant_openlesson
+                      printf '{"id":"L-1","ts":"t","event":"resolve","source":"","ref":"","head_sha":"x","text":"","resolved_by":{"kind":"guard","ref":"g"},"until":0,"prev":"x"}\n' >> .proofgate/lessons.jsonl; }
+# A comment in an ordinary file is level 2 wearing level 4's clothes — it must NOT count.
+plant_fakeenforce() { plant_openlesson; printf '# proofgate-lesson: L-1\n' > NOTES.md; }
+caso "lessons: an open lesson → WARN"                      2 98-unlearned-lessons.sh plant_openlesson
+caso "lessons: resolved → pass"                            0 98-unlearned-lessons.sh plant_donelesson
+caso "lessons: a comment in a NON-guard file → still WARN" 2 98-unlearned-lessons.sh plant_fakeenforce
+caso "lessons: no lessons file → pass"                     0 98-unlearned-lessons.sh plant_clean
+
+echo "══ edit-notice: memory + live guards at edit time ══════════"
+EN="$ROOT/hooks/edit-notice.sh"
+en_repo() { # <liveGuards> <with-memory>
+  local tmp; tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t
+    printf '{"liveGuards":%s}\n' "$1" > proofgate.json
+    mkdir -p src && echo 'export const x=1;' > src/a.ts && git add -A && git commit -qm base
+    if [ "$2" = yes ]; then mkdir -p .proofgate
+      printf '{"id":"m-1","ts":"t","event":"add","ref":null,"fact":"a.ts owns the cache","class":"decision","provenance":"human","anchors":[{"path":"src/a.ts","blob":"%s","line":0,"line_sha":""}],"created_sha":"x","ttl_diffs":20,"guard":null,"resolves":null,"via":"t","prev":""}\n' "$(git hash-object src/a.ts)" > .proofgate/memory.jsonl
+    fi ) >/dev/null 2>&1
+  printf '%s' "$tmp"
+}
+en_run() { ( cd "$1" && printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/src/a.ts"}}' "$1" | bash "$EN" 2>/dev/null ); }
+N1="$(en_repo true yes)"
+ok_t "$(printf '%s' "$(en_run "$N1")" | grep -q "owns the cache" && echo 1 || echo 0)" "edit-notice: recalls memory anchored to the edited file"
+# The live half: a credential pasted into the file is reported NOW, not at the gate.
+( cd "$N1" && printf 'export const x=1;\nconst k = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";\n' > src/a.ts )
+ok_t "$(printf '%s' "$(en_run "$N1")" | grep -q "secrets:" && echo 1 || echo 0)" "edit-notice: a live guard fires on the working tree"
+N2="$(en_repo false no)"
+( cd "$N2" && printf 'export const x=1;\nconst k = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";\n' > src/a.ts )
+ok_t "$([ -z "$(en_run "$N2")" ] && echo 1 || echo 0)" "edit-notice: liveGuards off and no memory → silent (negative)"
+rm -rf "$N1" "$N2"
+
+# install --uninstall must not take the team's committed memory with it.
+U="$(mktemp -d)"
+( cd "$U" && git init -q -b main && git config user.email t@t && git config user.name t && echo x > a.txt && git add -A && git commit -qm base
+  bash "$ROOT/install.sh" >/dev/null 2>&1
+  mkdir -p .proofgate && printf '{"id":"m-1","fact":"years of knowledge"}\n' > .proofgate/memory.jsonl
+  bash "$ROOT/install.sh" --uninstall >/dev/null 2>&1 ) >/dev/null 2>&1
+ok_t "$([ -f "$U/.proofgate/memory.jsonl" ] && echo 1 || echo 0)" "install: --uninstall keeps memory.jsonl (it is content, not tooling)"
+ok_t "$([ -f "$U/.proofgate/verify.sh" ] && echo 0 || echo 1)" "install: --uninstall still removes the machinery"
+rm -rf "$U"
+
 echo "══ mutate: mutation as proof of test ════════════════════════"
 # The two cases CONTRIBUTING requires: it must FIRE on the sin (a test that
 # cannot see its own subject) and stay SILENT on the clean case (a test that

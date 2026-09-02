@@ -7,9 +7,15 @@
 set -uo pipefail
 # shellcheck source=/dev/null
 . "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
+# The range now comes from pg_added_lines (which reads PROOFGATE_BASE itself); this
+# assertion stays because the contract still requires the variable to be set.
+# shellcheck disable=SC2034
 BASE="${PROOFGATE_BASE:?}"
 
-ADDED="$(git diff "$BASE"..HEAD -- '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.rb' '*.go' '*.rs' "${PG_SELF_EXCLUDE[@]}" | grep -E '^\+' | grep -v 'proofgate-allow' || true)"
+# Via the shared helper, so this guard also works in LIVE mode (the edit-notice hook
+# runs it against the working tree the moment a file is written). A `.only` is cheapest
+# to catch in the ten seconds after typing it, not at the gate.
+ADDED="$(pg_added_lines '*.ts' '*.tsx' '*.js' '*.jsx' '*.py' '*.rb' '*.go' '*.rs')"
 
 FOCUS=$(echo "$ADDED" | grep -Ec '\b(it|test|describe)\.only\(|\bf(describe|it)\(' || true)
 if [ "${FOCUS:-0}" -gt 0 ]; then

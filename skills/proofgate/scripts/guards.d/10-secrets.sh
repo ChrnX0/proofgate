@@ -8,6 +8,9 @@
 set -uo pipefail
 # shellcheck source=/dev/null
 . "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
+# The range now comes from pg_added_lines (which reads PROOFGATE_BASE itself); this
+# assertion stays because the contract still requires the variable to be set.
+# shellcheck disable=SC2034
 BASE="${PROOFGATE_BASE:?}"
 
 # High-signal provider shapes (low false-positive by design) → FAIL.
@@ -17,10 +20,12 @@ GENERIC='(api[_-]?key|apikey|secret|token|passwd|password|client[_-]?secret|acce
 # Placeholder values that only LOOK like secrets → never flag.
 PLACEHOLDER='example|sample|placeholder|changeme|change-me|your[_-]|dummy|redacted|xxx+|\.\.\.|<[a-z]|\$\{|process\.env|os\.environ|import\.meta'
 
-DIFF() { git diff "$BASE"..HEAD -- . \
+# The shared helper, so this runs in LIVE mode too (edit-notice, on the working tree).
+# A pasted credential is the one finding whose value decays fastest: caught seconds
+# after the paste it is an undo, caught at the gate it is a rotation.
+DIFF() { pg_added_lines . \
   ':(exclude)*.lock' ':(exclude)*lock.yaml' ':(exclude)*lock.json' \
-  ':(exclude)*.env.example' ':(exclude)*.env.sample' "${PG_SELF_EXCLUDE[@]}" 2>/dev/null \
-  | grep -E '^\+' | grep -v 'proofgate-allow'; }
+  ':(exclude)*.env.example' ':(exclude)*.env.sample'; }
 
 # Apply a user allowlist of regexes (each line is a pattern to drop).
 ALLOW="$(cfg_list '.secretAllowlist')"

@@ -9,7 +9,7 @@
 #   bash install.sh --uninstall                         # remove what we added
 #
 # What it does (and nothing else):
-#   1. copies verify.sh + lib.sh + impact.sh + claim.sh + hypothesis.sh + guards.d/ + templates/ into .proofgate/
+#   1. copies verify.sh + lib.sh + impact.sh + claim.sh + hypothesis.sh + memory.sh + guards.d/ + templates/ into .proofgate/
 #   2. --hook: wires .git/hooks/pre-push to gate before every push (existing hook
 #      is preserved as pre-push.local and still runs — we never clobber it)
 #   3. --ci: writes .github/workflows/proofgate.yml (warn-only to start)
@@ -29,7 +29,19 @@ DEST="$ROOT/.proofgate"
 MARK="# ProofGate pre-push hook"
 
 if [ "$UNINSTALL" = 1 ]; then
+  # .proofgate/ holds vendored MACHINERY (disposable) next to the team's committed
+  # MEMORY — memory.jsonl and lessons.jsonl, which are content, tracked in git and
+  # sometimes years old. `rm -rf` on the directory would delete an uninstall's worth of
+  # institutional knowledge as a side effect of removing a tool.
+  KEEP="$(mktemp -d)"
+  for f in memory.jsonl lessons.jsonl; do [ -f "$DEST/$f" ] && cp "$DEST/$f" "$KEEP/$f"; done
   rm -rf "$DEST"
+  if ls "$KEEP"/*.jsonl >/dev/null 2>&1; then
+    mkdir -p "$DEST"
+    cp "$KEEP"/*.jsonl "$DEST/" 2>/dev/null || true
+    echo "▫️  kept your project memory (.proofgate/memory.jsonl, lessons.jsonl) — that is content, not tooling"
+  fi
+  rm -rf "$KEEP"
   if [ -f "$GD/hooks/pre-push" ] && grep -q "$MARK" "$GD/hooks/pre-push" 2>/dev/null; then
     if [ -f "$GD/hooks/pre-push.local" ]; then mv "$GD/hooks/pre-push.local" "$GD/hooks/pre-push"; else rm -f "$GD/hooks/pre-push"; fi
   fi
@@ -46,6 +58,7 @@ vendor() { # copy from local clone if present, else from the release tarball
     cp "$SRC_DIR/skills/proofgate/scripts/impact.sh" "$DEST/impact.sh"
     cp "$SRC_DIR/skills/proofgate/scripts/claim.sh" "$DEST/claim.sh"
     cp "$SRC_DIR/skills/proofgate/scripts/hypothesis.sh" "$DEST/hypothesis.sh"
+    cp "$SRC_DIR/skills/proofgate/scripts/memory.sh" "$DEST/memory.sh"
     rm -rf "$DEST/guards.d" && cp -r "$SRC_DIR/skills/proofgate/scripts/guards.d" "$DEST/guards.d"
     rm -rf "$DEST/templates" && cp -r "$SRC_DIR/templates" "$DEST/templates" 2>/dev/null || true
   else
@@ -56,13 +69,14 @@ vendor() { # copy from local clone if present, else from the release tarball
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/impact.sh "$DEST/impact.sh"
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/claim.sh "$DEST/claim.sh"
     cp "$TMP"/proofgate-main/skills/proofgate/scripts/hypothesis.sh "$DEST/hypothesis.sh"
+    cp "$TMP"/proofgate-main/skills/proofgate/scripts/memory.sh "$DEST/memory.sh"
     rm -rf "$DEST/guards.d" && cp -r "$TMP"/proofgate-main/skills/proofgate/scripts/guards.d "$DEST/guards.d"
     rm -rf "$DEST/templates" && cp -r "$TMP"/proofgate-main/templates "$DEST/templates" 2>/dev/null || true
     rm -rf "$TMP"
   fi
 }
 vendor
-chmod +x "$DEST/verify.sh" "$DEST/impact.sh" "$DEST/claim.sh" "$DEST/hypothesis.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
+chmod +x "$DEST/verify.sh" "$DEST/impact.sh" "$DEST/claim.sh" "$DEST/hypothesis.sh" "$DEST/memory.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
 set -- "$DEST"/guards.d/*.sh; echo "✅ vendored: .proofgate/verify.sh + lib.sh (+ $# guards)"
 
 if [ "$HOOK" = 1 ]; then

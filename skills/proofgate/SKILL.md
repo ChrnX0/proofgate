@@ -1,6 +1,6 @@
 ---
 name: proofgate
-description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 20 diff guards) that computes the change's blast radius and writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
+description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 22 diff guards) that computes the change's blast radius and writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
 ---
 
 # ProofGate — acceptance with EVIDENCE, not hope
@@ -259,7 +259,37 @@ minutes of CI. Writing a lesson STORES it; only a guard ENFORCES it. So always a
   impossible? (A rule copied into five queries drifted and sat inverted for months; the
   fix was deriving all five from one constant — level 5, nothing left to remember.)
 
-Track the ones still stuck at level 2: that list *is* your next tooling backlog.
+Track the ones still stuck at level 2: that list *is* your next tooling backlog — and it
+is now literal. A recorded incident opens a **lesson**, and the gate keeps saying so on
+every run until something at level 4 answers it:
+
+```sh
+memory.sh add --class incident --provenance human --anchor <the file it broke in> \
+  --fact "<what actually shipped broken>" [--guard <name that would have caught it>]
+```
+
+Close it with a guard (add `proofgate-lesson: <id>` to the guard file), a regression
+test, or — when the honest answer is "documented only" — `memory.sh add --resolves <id>`.
+A comment in a README does not count: that is level 2 wearing level 4's clothes, and a
+test pins the distinction.
+
+### Memory that can go stale, and says so
+
+Facts about the project live in `.proofgate/memory.jsonl` (committed, so it is the
+team's, reviewable in a diff). The important part is not that it stores things — it is
+that **memory which is wrong is worse than no memory**: a note that was true in March
+reads exactly like one that is true today, and the reader, often a model with no way to
+check, builds on it.
+
+So every fact is ANCHORED to a file and the blob hash it had when recorded, and
+staleness is DERIVED at read time — never stored. Nothing to keep in sync, nothing on the
+hot path, and no field an agent can flip to make an inconvenient fact look current.
+Decisions hold until revoked; inferences expire when the code they read has moved;
+incidents never expire. An *agent's* "decision" expires like the inference it really is —
+otherwise a guess becomes permanent policy by choosing a label.
+
+Treat a recall as a hypothesis, not as truth. `[STALE]` means the code moved underneath
+it: re-verify before relying on it.
 
 Today's pain is tomorrow's tooling. Re-learning from scratch is forbidden.
 

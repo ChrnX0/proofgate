@@ -122,17 +122,48 @@ pg_ignored() {
 # finding, and its comments explain which pattern was suppressed and why. Scanning
 # it made suppressing a finding create a new one in the suppression file — found by
 # this gate on its own 2.7.0 diff. Safe for consumers too: the file is always ours.
-PG_SELF_EXCLUDE=(':(exclude).proofgateignore' ':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*/scripts/impact.sh' ':(exclude)*/scripts/claim.sh' ':(exclude)*/scripts/hypothesis.sh' ':(exclude)*edit-guard.sh' ':(exclude)*session-hook.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
+PG_SELF_EXCLUDE=(':(exclude).proofgateignore' ':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*/scripts/impact.sh' ':(exclude)*/scripts/claim.sh' ':(exclude)*/scripts/hypothesis.sh' ':(exclude)*/scripts/memory.sh' ':(exclude)*edit-notice.sh' ':(exclude)*prompt-hook.sh' ':(exclude)*audit-hook.sh' ':(exclude)*edit-guard.sh' ':(exclude)*session-hook.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
 
 # pg_added_with_file [extra-pathspecs...] — stream "<file>\t<added-line>" for every
 # added line in $BASE..HEAD, minus the gate's own files and any line bearing the
 # `proofgate-allow` marker. The bedrock every diff guard builds on.
+# LIVE mode (PROOFGATE_WORKTREE=1) points the same machinery at the WORKING TREE and,
+# with PROOFGATE_PATHSPEC, at a single file — so the edit-notice hook can run the guards
+# on a file the moment it is written, before it is committed. Defaults are unchanged:
+# without those variables this is byte-for-byte the old behaviour.
+#
+# Coverage is partial in live mode and that is deliberate rather than hidden: guards
+# that call `git diff "$BASE"..HEAD` themselves instead of using this helper see an
+# empty range and stay quiet. They are not wrong, just not early — the gate still runs
+# every one of them on the real diff. Silence here means "nothing this path can see",
+# never "clean".
 pg_added_with_file() {
   local base="${PROOFGATE_BASE:?PROOFGATE_BASE unset}"
-  git diff "$base"..HEAD -- . "${PG_SELF_EXCLUDE[@]}" "$@" 2>/dev/null | awk '
+  local range_diff
+  if [ "${PROOFGATE_WORKTREE:-}" = 1 ]; then
+    set -- "$@" ${PROOFGATE_PATHSPEC:+"$PROOFGATE_PATHSPEC"}
+    range_diff="$(git diff HEAD -- . "${PG_SELF_EXCLUDE[@]}" "$@" 2>/dev/null)"
+  else
+    range_diff="$(git diff "$base"..HEAD -- . "${PG_SELF_EXCLUDE[@]}" "$@" 2>/dev/null)"
+  fi
+  printf '%s\n' "$range_diff" | awk '
     /^\+\+\+ b\// { f=substr($0,7); next }
     /^\+/ && !/^\+\+\+/ { l=substr($0,2); if (l !~ /proofgate-allow/) print f "\t" l }
   '
+}
+
+# pg_added_lines [pathspecs...] — every ADDED line in the guarded range, minus the
+# gate's own files and any `proofgate-allow` line. The same view pg_added_with_file
+# builds, without the filename prefix — several guards had hand-rolled this identical
+# pipeline, which meant they also silently opted out of live mode.
+pg_added_lines() {
+  local base="${PROOFGATE_BASE:?PROOFGATE_BASE unset}"
+  if [ "${PROOFGATE_WORKTREE:-}" = 1 ]; then
+    set -- "$@" ${PROOFGATE_PATHSPEC:+"$PROOFGATE_PATHSPEC"}
+    git diff HEAD -- "$@" "${PG_SELF_EXCLUDE[@]}" 2>/dev/null
+  else
+    git diff "$base"..HEAD -- "$@" "${PG_SELF_EXCLUDE[@]}" 2>/dev/null
+  fi | grep -E '^\+' | grep -v '^+++' | grep -v 'proofgate-allow' || true
 }
 
 # pg_scan <guard-name> <ERE> [extra-pathspecs...] — print the file of each added
@@ -244,6 +275,40 @@ pg_ledger_append() {
   [ -f "$f" ] && prev="$(tail -1 "$f" 2>/dev/null | pg_sha1)"
   printf '%s,"prev":"%s"}\n' "$body" "$prev" >> "$f"
   pg_unlock "$(basename "$f")"
+}
+
+# ── lessons: a scar with nothing enforcing it yet ────────────────────────────
+# The SKILL's escalation ladder says only levels 4 and 5 stand on their own — a guard
+# that fails loud, or a design where the mistake is impossible. Everything below that
+# depends on someone remembering. So an incident, or a finding the skeptic refused to
+# drop, OPENS a lesson, and the gate keeps saying so until something at level 4+ answers
+# it: a guard, a regression test, or an explicit memory entry. Writing a lesson down
+# STORES it; this is what stops "stored" from being mistaken for "handled".
+pg_lesson_add() { # pg_lesson_add <source> <ref> <text>
+  local f=".proofgate/lessons.jsonl"
+  mkdir -p .proofgate 2>/dev/null
+  local id; id="L-$(printf '%s|%s' "$2" "$3" | pg_sha1 | cut -c1-6)"
+  grep -q "\"id\":\"$id\"" "$f" 2>/dev/null && { printf '%s' "$id"; return 0; }
+  pg_ledger_append "$f" "{\"id\":\"$id\",\"ts\":\"$(pg_now)\",\"event\":\"open\",\"source\":\"$1\",\"ref\":\"$(pg_json_escape "$2")\",\"head_sha\":\"$(git rev-parse HEAD 2>/dev/null || echo unknown)\",\"text\":\"$(pg_json_escape "$3")\",\"resolved_by\":null,\"until\":0"
+  printf '%s' "$id"
+}
+pg_lesson_resolve() { # pg_lesson_resolve <lesson-id> <kind> <ref>
+  local f=".proofgate/lessons.jsonl"
+  [ -f "$f" ] || return 0
+  pg_ledger_append "$f" "{\"id\":\"$1\",\"ts\":\"$(pg_now)\",\"event\":\"resolve\",\"source\":\"\",\"ref\":\"\",\"head_sha\":\"$(git rev-parse HEAD 2>/dev/null || echo unknown)\",\"text\":\"\",\"resolved_by\":{\"kind\":\"$2\",\"ref\":\"$(pg_json_escape "$3")\"},\"until\":0"
+}
+# pg_lessons_open — ids with an `open` event and no `resolve`/unexpired `snooze`.
+pg_lessons_open() {
+  local f=".proofgate/lessons.jsonl"
+  [ -f "$f" ] || return 0
+  awk -v now="$(pg_epoch)" '
+    match($0, /"id":"[^"]*"/) { id = substr($0, RSTART + 6, RLENGTH - 7) }
+    match($0, /"event":"[^"]*"/) { ev = substr($0, RSTART + 9, RLENGTH - 10) }
+    match($0, /"until":[0-9]*/) { u = substr($0, RSTART + 8, RLENGTH - 8) + 0 }
+    match($0, /"text":"[^"]*"/) { t = substr($0, RSTART + 8, RLENGTH - 9) }
+    { st[id] = ev; if (t != "") txt[id] = t; if (ev == "snooze") snz[id] = u }
+    END { for (i in st) if (st[i] == "open" || (st[i] == "snooze" && snz[i] < now)) print i "\t" txt[i] }
+  ' "$f" 2>/dev/null
 }
 
 # pg_ledger_verify <file> — 0 = chain intact (or file absent). Prints the 1-based

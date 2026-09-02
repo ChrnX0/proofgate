@@ -60,6 +60,13 @@
     "strikeThreshold": 2
   },
 
+  "$comment_memory": "Project memory (.proofgate/memory.jsonl, committed). Every fact is ANCHORED to a file plus the blob hash it had when recorded, and staleness is DERIVED at read time — never stored — so there is no field to keep in sync and none an agent can flip. Decisions hold until revoked; inferences expire after ttlDiffs commits touch the anchored file; incidents never expire. agentDecisionsExpire makes an agent's own 'decision' expire like the inference it really is, so a guess cannot become permanent policy. liveGuards runs the diff guards on a file the moment it is edited (PostToolUse) instead of only at the gate — a pasted credential caught seconds later is an undo; caught at the gate it is a rotation.",
+  "memory": {
+    "ttlDiffs": 20,
+    "agentDecisionsExpire": true
+  },
+  "liveGuards": false,
+
   "$comment_hooks": "The plugin's push-guard (PreToolUse) refuses `git push` without a fresh passing verdict; set pushGuard:false to disable. stopGuard (opt-in, default off) makes the Stop hook refuse 'done' without one.",
   "pushGuard": true,
   "stopGuard": false
