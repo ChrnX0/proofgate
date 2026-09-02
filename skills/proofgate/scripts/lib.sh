@@ -160,7 +160,11 @@ pg_ignored() {
   grep -Fxq -- "$fp" "$f" 2>/dev/null
 }
 
-# Pathspecs that keep the gate from flagging its OWN source. Vendoring the guards
+# Pathspecs that keep the gate from flagging its OWN source. A directory pathspec where
+# one is safe, individual names only where it is not: this list was a hand-maintained
+# enumeration of every script, which meant adding a script silently meant forgetting to
+# add it here — the same drift the guard-count test exists to catch, in the file whose
+# job is preventing self-inflicted findings. Vendoring the guards
 # into a consumer repo adds files whose text literally CONTAINS the sin patterns
 # (rejectUnauthorized:false, <<<<<<<, key regexes); without this every guard would
 # fail the very commit that installs it. (Guards also carry inline `proofgate-allow`
@@ -169,7 +173,22 @@ pg_ignored() {
 # finding, and its comments explain which pattern was suppressed and why. Scanning
 # it made suppressing a finding create a new one in the suppression file — found by
 # this gate on its own 2.7.0 diff. Safe for consumers too: the file is always ours.
-PG_SELF_EXCLUDE=(':(exclude).proofgateignore' ':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*/scripts/impact.sh' ':(exclude)*/scripts/claim.sh' ':(exclude)*/scripts/hypothesis.sh' ':(exclude)*/scripts/memory.sh' ':(exclude)*/scripts/experiment.sh' ':(exclude)*/scripts/mode.sh' ':(exclude)*/scripts/skeptic.sh' ':(exclude)*/scripts/proof.sh' ':(exclude)*edit-notice.sh' ':(exclude)*prompt-hook.sh' ':(exclude)*audit-hook.sh' ':(exclude)*edit-guard.sh' ':(exclude)*session-hook.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
+PG_SELF_EXCLUDE=(
+  ':(exclude).proofgateignore'                     # our own suppression list, which must NAME the patterns it suppresses
+  ':(exclude)*guards.d/*'                          # every guard literally contains the sin it hunts
+  # Both spellings: a leading `*/` requires a directory BEFORE it, so it misses the path
+  # `skills/proofgate/scripts/...` at the repo root — which is this repo's own layout, so
+  # the engine went straight back to flagging itself. Verified by the self-gate.
+  ':(exclude)skills/proofgate/scripts/*' ':(exclude)*/skills/proofgate/scripts/*'
+  ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*'   # the vendored copy + the team's memory
+  ':(exclude)*run-tests.sh' ':(exclude)*acceptance.sh'  # the tests, which plant sins on purpose
+  # Hooks are named individually rather than by directory: `hooks/` is OUR path here, but
+  # in a consumer repo it may hold their real code, and blanket-excluding it would blind
+  # the gate on exactly the files they care about.
+  ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh' ':(exclude)*edit-guard.sh'
+  ':(exclude)*session-hook.sh' ':(exclude)*edit-notice.sh' ':(exclude)*prompt-hook.sh'
+  ':(exclude)*audit-hook.sh'
+)
 
 # pg_added_with_file [extra-pathspecs...] — stream "<file>\t<added-line>" for every
 # added line in $BASE..HEAD, minus the gate's own files and any line bearing the
