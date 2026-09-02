@@ -122,7 +122,7 @@ pg_ignored() {
 # finding, and its comments explain which pattern was suppressed and why. Scanning
 # it made suppressing a finding create a new one in the suppression file — found by
 # this gate on its own 2.7.0 diff. Safe for consumers too: the file is always ours.
-PG_SELF_EXCLUDE=(':(exclude).proofgateignore' ':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*/scripts/impact.sh' ':(exclude)*/scripts/claim.sh' ':(exclude)*/scripts/hypothesis.sh' ':(exclude)*/scripts/memory.sh' ':(exclude)*/scripts/experiment.sh' ':(exclude)*/scripts/mode.sh' ':(exclude)*edit-notice.sh' ':(exclude)*prompt-hook.sh' ':(exclude)*audit-hook.sh' ':(exclude)*edit-guard.sh' ':(exclude)*session-hook.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
+PG_SELF_EXCLUDE=(':(exclude).proofgateignore' ':(exclude)*guards.d/*' ':(exclude)*/.proofgate/*' ':(exclude).proofgate/*' ':(exclude)*/scripts/verify.sh' ':(exclude)*/scripts/lib.sh' ':(exclude)*/scripts/impact.sh' ':(exclude)*/scripts/claim.sh' ':(exclude)*/scripts/hypothesis.sh' ':(exclude)*/scripts/memory.sh' ':(exclude)*/scripts/experiment.sh' ':(exclude)*/scripts/mode.sh' ':(exclude)*/scripts/skeptic.sh' ':(exclude)*/scripts/proof.sh' ':(exclude)*edit-notice.sh' ':(exclude)*prompt-hook.sh' ':(exclude)*audit-hook.sh' ':(exclude)*edit-guard.sh' ':(exclude)*session-hook.sh' ':(exclude)*run-tests.sh' ':(exclude)*push-guard.sh' ':(exclude)*stop-guard.sh')
 
 # pg_added_with_file [extra-pathspecs...] — stream "<file>\t<added-line>" for every
 # added line in $BASE..HEAD, minus the gate's own files and any line bearing the
@@ -174,7 +174,12 @@ pg_scan() {
   local tab; tab="$(printf '\t')"
   pg_added_with_file "$@" | while IFS="$tab" read -r file content; do
     printf '%s' "$content" | grep -Eq -- "$pat" || continue     # match CONTENT only, not the path
-    pg_ignored "$(pg_fingerprint "$guard" "$file" "$content")" && continue
+    # A suppressed finding is data, not silence: it is one half of the ratio that says
+    # whether this guard is still earning its place.
+    if pg_ignored "$(pg_fingerprint "$guard" "$file" "$content")"; then
+      pg_calib "$guard" allowed "$file (.proofgateignore)"
+      continue
+    fi
     printf '%s\n' "$file"
   done
 }
@@ -275,6 +280,27 @@ pg_ledger_append() {
   [ -f "$f" ] && prev="$(tail -1 "$f" 2>/dev/null | pg_sha1)"
   printf '%s,"prev":"%s"}\n' "$body" "$prev" >> "$f"
   pg_unlock "$(basename "$f")"
+}
+
+# ── calibration: is a guard earning its false positives? ─────────────────────
+# Every guard trades signal against noise, and the trade is invisible from inside one
+# run. A guard that fires constantly and is suppressed every time protects nothing — it
+# trains people to reach for the escape hatch, and that habit generalises to the guards
+# that matter. Three counters make the trade visible:
+#
+#   fired   — the guard produced a finding
+#   allowed — someone silenced one (proofgate-allow, .proofgateignore, severity override)
+#   scar    — a recorded incident credited this guard as what would have caught it
+#
+# High allowed/fired with zero scars is the demotion signal. It is REPORTED and never
+# applied: a tool that quietly turned its own checks off after enough suppressions would
+# automate exactly the erosion it exists to measure.
+pg_calib() { # pg_calib <guard> <fired|allowed|scar> [detail]
+  [ "$(cfg '.calibration' 2>/dev/null)" = "false" ] && return 0
+  local f; f="$(pg_git_dir)/proofgate-calibration.jsonl"
+  printf '{"ts":"%s","head_sha":"%s","guard":"%s","event":"%s","detail":"%s"}\n' \
+    "$(pg_now)" "$(git rev-parse HEAD 2>/dev/null || echo unknown)" "$1" "$2" "$(pg_json_escape "${3:-}")" \
+    >> "$f" 2>/dev/null || true
 }
 
 # ── lessons: a scar with nothing enforcing it yet ────────────────────────────

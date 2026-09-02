@@ -1,6 +1,6 @@
 ---
 name: proofgate
-description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 22 diff guards) that computes the change's blast radius and writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
+description: Acceptance gate to run BEFORE declaring any delivery "done" (feature, bugfix, release, deploy, PR merge-ready). Four layers — a mechanical gate (tests, push state, 23 diff guards) that computes the change's blast radius and writes a SHA-bound verdict, a judgment gate with an evidence hierarchy (believed → static → tested → exercised → in-prod) that demands proof for every claim, an adversarial skeptic pass, and hooks that refuse to push or declare done without a fresh passing verdict. Also use when a bug reappears or a fix has failed twice.
 ---
 
 # ProofGate — acceptance with EVIDENCE, not hope
@@ -227,11 +227,35 @@ haven't verified yet.
 
 Templates: `templates/evidence-report.md` and `templates/root-cause.md` — fill them.
 
-## Step 3 — the adversarial pass (recommended)
+## Step 3 — the adversarial pass, sized to the blast radius
 
-Launch the **gate-skeptic** subagent (default-refute) to try to break your claims
-against the diff. Resolve or honestly downgrade every REFUTED/UNPROVEN before
-declaring done. Or run `/proofgate:gate` to do the whole ritual at once.
+A panel, launched in proportion to what the change can break — cost that does not scale
+with risk is cost people learn to skip:
+
+| Class | Who runs |
+|---|---|
+| **L1** docs/tests/config | nobody |
+| **L2** source with callers | `gate-skeptic` |
+| **L3** auth · money · migrations · crypto · permissions | `gate-skeptic` + `intent-skeptic` + `security-skeptic` |
+
+`impact.sh --slice` writes what they read: the diff, the first-degree callers of every
+changed symbol, the tests that touch them. They read that, not your summary — a summary
+is written by the same process that wrote the code and inherits its blind spots.
+
+**The skeptic is held to its own standard.** Every REFUTED must carry a command that
+reproduces the problem, and `skeptic.sh record` re-runs it. If it exits 0, or none was
+given, the finding is downgraded to UNPROVEN and the downgrade is recorded.
+
+That symmetry is not bureaucracy. A skeptic that writes *"REFUTED: this probably breaks
+under load"* has produced an **E0 claim** — words, no run — and because it sounds
+rigorous it is trusted more than the claim it just refuted. It is the same failure this
+whole skill exists to catch, wearing the other costume, and it costs more: it sends
+people to fix what was never broken, and it teaches them to discount the next finding.
+A CONFIRMED is capped at the level the ledger recorded, for the mirror-image reason:
+agreement is not a run.
+
+What survives is a command that fails today, on this diff. Fix it, or record why the
+failure is acceptable. Run `/proofgate:gate` to do the whole ritual at once.
 
 ## Step 4 — learn (the self-improvement loop)
 

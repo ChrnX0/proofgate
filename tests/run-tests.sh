@@ -866,6 +866,122 @@ rm -rf "$D1"
 a_mode_normal() { grep -q '"mode":"normal"' "$(git rev-parse --git-dir)/proofgate-verdict.json"; }
 caso_verify "engine: verdict records the mode" 0 setup_clean a_mode_normal
 
+echo "══ skeptic panel: refutations held to their own standard ═══"
+SKEP="$ROOT/skills/proofgate/scripts/skeptic.sh"
+sk_repo() {
+  local tmp; tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t
+    echo one > a.txt && git add -A && git commit -qm base
+    PROOFGATE_LIB="$LIB" bash "$CLAIM" add --claim "parser handles empty" --level E2 --run "cat a.txt | grep -q one" ) >/dev/null 2>&1
+  printf '%s' "$tmp"
+}
+sk_record() { ( cd "$1" && printf '%s\n' "$2" | PROOFGATE_LIB="$LIB" bash "$SKEP" record --agent "${3:-gate-skeptic}" 2>&1 ); }
+sk_json() { cat "$1/.git/proofgate-skeptic.json" 2>/dev/null; }
+
+S1="$(sk_repo)"
+SCID="$( cd "$S1" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null | awk '{print $1}' | head -1 )"
+# A refutation whose command really fails is real, and becomes a lesson.
+sk_record "$S1" "REFUTED - :: the empty case is not covered :: repro: grep -q ZZZ a.txt" >/dev/null
+J="$(sk_json "$S1")"
+ok_t "$(printf '%s' "$J" | grep -q '"verdict":"REFUTED"' && echo 1 || echo 0)" "skeptic: a reproducing refutation stands"
+ok_t "$(printf '%s' "$J" | grep -q '"reproduced":true' && echo 1 || echo 0)" "skeptic: the repro command was actually re-run"
+ok_t "$([ -f "$S1/.proofgate/lessons.jsonl" ] && echo 1 || echo 0)" "skeptic: a surviving refutation opens a lesson"
+rm -rf "$S1"
+
+# The symmetry. A skeptic asserting a break with no command has produced an E0 claim —
+# the same failure it exists to catch, and more expensive, because it sends people to
+# fix what was never broken.
+S2="$(sk_repo)"
+sk_record "$S2" "REFUTED - :: this probably breaks under concurrency :: repro: -" >/dev/null
+J2="$(sk_json "$S2")"
+ok_t "$(printf '%s' "$J2" | grep -q '"verdict":"UNPROVEN","original_verdict":"REFUTED"' && echo 1 || echo 0)" \
+     "skeptic: REFUTED with no repro → downgraded to UNPROVEN"
+ok_t "$(printf '%s' "$J2" | grep -q 'no reproducing command' && echo 1 || echo 0)" "skeptic: the downgrade says why"
+rm -rf "$S2"
+
+S3="$(sk_repo)"
+sk_record "$S3" "REFUTED - :: the config is never read :: repro: cat a.txt" >/dev/null
+J3="$(sk_json "$S3")"
+ok_t "$(printf '%s' "$J3" | grep -q '"verdict":"UNPROVEN"' && echo 1 || echo 0)" \
+     "skeptic: REFUTED whose command PASSES → downgraded"
+ok_t "$(printf '%s' "$J3" | grep -q '"reproduced":false' && echo 1 || echo 0)" "skeptic: the failed reproduction is recorded"
+rm -rf "$S3"
+
+# A skeptic cannot RAISE evidence either: agreement is not a run.
+S4="$(sk_repo)"
+SCID4="$( cd "$S4" && PROOFGATE_LIB="$LIB" bash "$CLAIM" list </dev/null 2>/dev/null | awk '{print $1}' | head -1 )"
+sk_record "$S4" "CONFIRMED $SCID4 :: I read the test and it looks right :: repro: -" >/dev/null
+ok_t "$(printf '%s' "$(sk_json "$S4")" | grep -q '"level_cap":"E2"' && echo 1 || echo 0)" \
+     "skeptic: CONFIRMED is capped at the level the ledger recorded"
+ok_t "$([ "$( cd "$S4" && PROOFGATE_LIB="$LIB" bash "$SKEP" status </dev/null 2>/dev/null )" = present ] && echo 1 || echo 0)" \
+     "skeptic: status is present for HEAD"
+( cd "$S4" && echo two > b.txt && git add -A && git commit -qm moved ) >/dev/null 2>&1
+ok_t "$([ "$( cd "$S4" && PROOFGATE_LIB="$LIB" bash "$SKEP" status </dev/null 2>/dev/null )" = stale ] && echo 1 || echo 0)" \
+     "skeptic: a pass recorded before the code moved is STALE (negative)"
+rm -rf "$S4"
+
+# ── 99-skeptic-required ──────────────────────────────────────────────────────
+plant_l3_nopass() { mkdir -p src/auth .git && echo 'export const login = (u) => u;' > src/auth/login.ts
+                    printf '{"schemaVersion":1,"head_sha":"x","risk_class":"L3","skeptic_required":true,"risk_reasons":["auth"]}\n' > .git/proofgate-impact.json; }
+plant_l2()        { mkdir -p src .git && echo 'export const x=1;' > src/a.ts
+                    printf '{"schemaVersion":1,"head_sha":"x","risk_class":"L2","skeptic_required":false,"risk_reasons":[]}\n' > .git/proofgate-impact.json; }
+plant_l3_stale()  { plant_l3_nopass
+                    printf '{"schemaVersion":1,"head_sha":"deadbeef","agents":["gate-skeptic","security-skeptic"],"findings":[]}\n' > .git/proofgate-skeptic.json; }
+plant_l3_partial(){ plant_l3_nopass; git add -A >/dev/null 2>&1; git commit -qm x >/dev/null 2>&1
+                    printf '{"schemaVersion":1,"head_sha":"%s","agents":["gate-skeptic"],"findings":[]}\n' "$(git rev-parse HEAD)" > .git/proofgate-skeptic.json; }
+plant_l3_ok()     { plant_l3_nopass; git add -A >/dev/null 2>&1; git commit -qm x >/dev/null 2>&1
+                    printf '{"schemaVersion":1,"head_sha":"%s","agents":["gate-skeptic","security-skeptic"],"findings":[{"agent":"security-skeptic","verdict":"UNPROVEN"}]}\n' "$(git rev-parse HEAD)" > .git/proofgate-impact.tmp
+                    printf '{"schemaVersion":1,"head_sha":"%s","agents":["gate-skeptic","security-skeptic"],"findings":[{"agent":"security-skeptic","verdict":"UNPROVEN"}]}\n' "$(git rev-parse HEAD)" > .git/proofgate-skeptic.json
+                    rm -f .git/proofgate-impact.tmp; }
+plant_l3_open()   { plant_l3_nopass; git add -A >/dev/null 2>&1; git commit -qm x >/dev/null 2>&1
+                    printf '{"schemaVersion":1,"head_sha":"%s","agents":["gate-skeptic","security-skeptic"],"findings":[{"agent":"security-skeptic","verdict":"REFUTED"}]}\n' "$(git rev-parse HEAD)" > .git/proofgate-skeptic.json; }
+caso "skeptic-required: L3 with no pass → WARN"            2 99-skeptic-required.sh plant_l3_nopass
+caso "skeptic-required: L2 → not applicable"               0 99-skeptic-required.sh plant_l2
+caso "skeptic-required: pass from another commit → WARN"   2 99-skeptic-required.sh plant_l3_stale
+caso "skeptic-required: security-skeptic missing → WARN"   2 99-skeptic-required.sh plant_l3_partial
+# These two need the skeptic record to name the FINAL head, and `caso` commits once more
+# after its setup runs — so they are built directly instead of through that harness.
+sk_guard_case() { # sk_guard_case <name> <expected-exit> <verdict-in-record>
+  local nome="$1" esperado="$2" verdict="$3" tmp code=0
+  tmp="$(mktemp -d)"
+  ( cd "$tmp" && git init -q -b main && git config user.email t@t && git config user.name t
+    git commit -q --allow-empty -m base
+    mkdir -p src/auth && echo 'export const login = (u) => u;' > src/auth/login.ts
+    git add -A && git commit -qm change
+    printf '{"schemaVersion":1,"head_sha":"x","risk_class":"L3","skeptic_required":true,"risk_reasons":["auth"]}\n' > .git/proofgate-impact.json
+    printf '{"schemaVersion":1,"head_sha":"%s","agents":["gate-skeptic","security-skeptic"],"findings":[{"agent":"security-skeptic","verdict":"%s"}]}\n' \
+      "$(git rev-parse HEAD)" "$verdict" > .git/proofgate-skeptic.json ) >/dev/null 2>&1
+  ( cd "$tmp" && PROOFGATE_BASE="HEAD~1" PROOFGATE_LIB="$LIB" PROOFGATE_CFG="proofgate.json" \
+      bash "$GUARDS/99-skeptic-required.sh" ) >/dev/null 2>&1 || code=$?
+  if [ "$code" = "$esperado" ]; then echo "PASS  $nome (exit $code)"; PASS=$((PASS + 1))
+  else echo "FAIL  $nome — expected exit $esperado, got $code"; FAIL=$((FAIL + 1)); fi
+  rm -rf "$tmp"
+}
+sk_guard_case "skeptic-required: full pass, nothing reproducing → pass" 0 UNPROVEN
+sk_guard_case "skeptic-required: a reproducing refutation is open → FAIL" 1 REFUTED
+
+echo "══ calibration: is a guard earning its noise? ══════════════"
+CAL="$(mktemp -d)"
+CALREMOTE="$(mktemp -d)"; ( cd "$CALREMOTE" && git init -q --bare ) >/dev/null 2>&1
+# A bare remote, as caso_verify does: without an origin the engine cannot resolve a diff
+# base, so no guard runs and no calibration event is ever recorded.
+( cd "$CAL" && git init -q -b main && git config user.email t@t && git config user.name t
+  printf '{"commands":{"typecheck":"true","test":"true","lint":"true"}}\n' > proofgate.json
+  echo x > a.txt && git add -A && git commit -qm base
+  git remote add origin "$CALREMOTE" && git push -qu origin main && git checkout -q -b feature
+  for i in 1 2 3; do printf 'debugger;\nconst a%s = 1;\n' "$i" > a.ts; git add -A; git commit -qm "c$i"
+    PROOFGATE_LIB="$LIB" bash "$VERIFY" </dev/null; done ) >/dev/null 2>&1
+CALOUT="$( cd "$CAL" && PROOFGATE_LIB="$LIB" bash "$VERIFY" --calibration </dev/null 2>/dev/null )"
+ok_t "$(printf '%s' "$CALOUT" | grep -q 'debug-leftovers' && echo 1 || echo 0)" "calibration: a firing guard is counted"
+ok_t "$(printf '%s' "$CALOUT" | grep -E 'debug-leftovers' | grep -qE '[1-9]' && echo 1 || echo 0)" "calibration: the fired count is not empty"
+# The report must never edit configuration — automating the erosion it measures would
+# be the worst possible version of this feature.
+CFG_BEFORE="$(pg_sha1 "$CAL/proofgate.json" 2>/dev/null || true)"
+( cd "$CAL" && PROOFGATE_LIB="$LIB" bash "$VERIFY" --calibration ) >/dev/null 2>&1
+ok_t "$([ "$CFG_BEFORE" = "$(pg_sha1 "$CAL/proofgate.json" 2>/dev/null || true)" ] && echo 1 || echo 0)" \
+     "calibration: reporting never edits proofgate.json"
+rm -rf "$CAL" "$CALREMOTE"
+
 echo "══ mutate: mutation as proof of test ════════════════════════"
 # The two cases CONTRIBUTING requires: it must FIRE on the sin (a test that
 # cannot see its own subject) and stay SILENT on the clean case (a test that

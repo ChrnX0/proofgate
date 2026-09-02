@@ -73,6 +73,10 @@
     "timeoutSeconds": 900
   },
 
+  "$comment_skeptic": "requireSkeptic turns 99-skeptic-required from a WARN into a FAIL: an L3 change (auth, money, migrations, crypto, permissions) cannot be called done without a recorded adversarial pass for the CURRENT commit. Leave it off until the team runs the panel — a hard block on a step nobody has wired up is how a gate gets bypassed wholesale. calibration:false stops recording which guards fire and which get suppressed; the report it feeds (verify.sh --calibration) never changes configuration on its own.",
+  "requireSkeptic": false,
+  "calibration": true,
+
   "$comment_hooks": "The plugin's push-guard (PreToolUse) refuses `git push` without a fresh passing verdict; set pushGuard:false to disable. stopGuard (opt-in, default off) makes the Stop hook refuse 'done' without one.",
   "pushGuard": true,
   "stopGuard": false

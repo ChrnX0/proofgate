@@ -13,6 +13,7 @@
 #   bash verify.sh --base <ref>       # diff base (default: merge-base with origin default branch)
 #   bash verify.sh --report <file>    # also write a markdown report
 #   bash verify.sh --no-impact        # skip the blast-radius computation
+#   bash verify.sh --calibration      # report which guards are earning their noise
 #
 # Exit codes: 0 = gate passed (warnings allowed unless --strict) · 1 = gate FAILED.
 #
@@ -27,7 +28,7 @@
 set -uo pipefail
 
 # ── flags ────────────────────────────────────────────────────────────────────
-BUILD=0 STRICT=0 DRY=0 JSON=0 SMOKE=0 ONLY="" BASE_REF="" REPORT="" NOIMPACT=0
+BUILD=0 STRICT=0 DRY=0 JSON=0 SMOKE=0 ONLY="" BASE_REF="" REPORT="" NOIMPACT=0 CALIB=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --build) BUILD=1 ;;
@@ -39,6 +40,7 @@ while [ $# -gt 0 ]; do
     --base) shift; BASE_REF="${1:-}" ;;
     --report) shift; REPORT="${1:-}" ;;
     --no-impact) NOIMPACT=1 ;;
+    --calibration) CALIB=1 ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown flag: $1 (see --help)" >&2; exit 1 ;;
   esac
@@ -207,6 +209,7 @@ EOF
       [ -f "$guard" ] || continue
       gname="$(basename "$guard" .sh | sed -E 's/^[0-9]+-//')"
       [ "$gname" = "$ONLY" ] || continue
+      export PROOFGATE_GUARD="$gname"
       OUT="$(with_timeout bash "$guard" 2>&1)"; CODE=$?
       printf '%s\n' "$OUT"
       exit "$( [ "$CODE" = 1 ] && echo 1 || echo 0 )"
@@ -215,6 +218,40 @@ EOF
 $ONLY_DIRS
 EOF
   echo "no guard named '$ONLY' (looked in: $(echo "$ONLY_DIRS" | tr '\n' ' '))" >&2; exit 1
+fi
+
+# ── --calibration: the scoreboard, reported and never applied ────────────────
+if [ "$CALIB" = 1 ]; then
+  CF="$(pg_git_dir)/proofgate-calibration.jsonl"
+  if [ ! -f "$CF" ]; then
+    echo "no calibration data yet — it accumulates as guards fire and as findings are suppressed"
+    exit 0
+  fi
+  printf '%-28s %6s %8s %6s   %s\n' GUARD FIRED ALLOWED SCARS NOTE
+  # Two columns extracted with sed (the JSON is single-line and fixed-shape), then
+  # folded with awk. Splitting the raw line on quote characters was fragile and produced
+  # an EMPTY table — a report that silently shows nothing is worse than no report, since
+  # it reads as "no guard has a problem".
+  sed -n 's/.*"guard":"\([^"]*\)".*"event":"\([^"]*\)".*/\1 \2/p' "$CF" 2>/dev/null | awk '
+    { seen[$1] = 1; c[$1 "|" $2]++ }
+    END {
+      for (g in seen) {
+        f = c[g "|fired"] + 0; a = c[g "|allowed"] + 0; s = c[g "|scar"] + 0
+        note = ""
+        # Reported, never applied. Deliberately unforgiving to state and deliberately
+        # powerless to act: a guard suppressed at least half the times it fires, often
+        # enough that it is not chance, and never once credited with catching anything
+        # real, is a CANDIDATE for demotion — and that call belongs to a person.
+        if (f >= 5 && a * 2 >= f && s == 0) note = "candidate for demotion — suppressed " a "/" f " times, never credited with a scar"
+        else if (s > 0) note = "earned it: credited in " s " recorded incident(s)"
+        printf "%-28s %6d %8d %6d   %s\n", g, f, a, s, note
+      }
+    }' | LC_ALL=C sort
+  echo
+  echo "Nothing here changes any configuration. A tool that quietly turned its own checks"
+  echo "off after enough suppressions would automate exactly the erosion it measures —"
+  echo "demoting a guard is a decision for a person, made with this table in front of them."
+  exit 0
 fi
 
 run_named typecheck
@@ -294,12 +331,15 @@ EOF
       if [ -n "$sev" ] && [ "$sev" != "off" ]; then
         case "$sev" in fail) [ "$CODE" != 0 ] && CODE=1 ;; warn) [ "$CODE" = 1 ] && CODE=2 ;; esac
         note "severity override: $gname → $sev (proofgate.json)"
+        command -v pg_calib >/dev/null 2>&1 && pg_calib "$gname" allowed "severity override → $sev"
       fi
       [ -n "$OUT" ] && while IFS= read -r line; do say "$line"; done <<< "$OUT"
       case $CODE in
         0) record "$gname" pass "$OUT" ;;
-        1) FAILS=$((FAILS + 1)); FIRED="$FIRED $gname"; record "$gname" fail "$OUT"; gh_annot error "$OUT" ;;
-        2) WARNS=$((WARNS + 1)); FIRED="$FIRED $gname"; record "$gname" warn "$OUT"; gh_annot warning "$OUT" ;;
+        1) FAILS=$((FAILS + 1)); FIRED="$FIRED $gname"; record "$gname" fail "$OUT"; gh_annot error "$OUT"
+           command -v pg_calib >/dev/null 2>&1 && pg_calib "$gname" fired fail ;;
+        2) WARNS=$((WARNS + 1)); FIRED="$FIRED $gname"; record "$gname" warn "$OUT"; gh_annot warning "$OUT"
+           command -v pg_calib >/dev/null 2>&1 && pg_calib "$gname" fired warn ;;
       esac
     done
   done <<EOF

@@ -56,6 +56,34 @@ Specifically hunt for:
 5. **The self-report trap.** "A subagent said it passed" / "CI is green" — did
    anyone read the actual output, exit code, and failure count?
 
-Be brutally concise. Output: a per-claim verdict list (CONFIRMED/REFUTED/UNPROVEN +
-one line of evidence-or-gap each), then a one-line bottom line: is this delivery
-honestly done, and if not, the single most important thing left to prove.
+## Read the slice, not the summary
+
+When `.git/proofgate-slice.md` exists, that is your scope: the diff plus the first-degree
+callers of every changed symbol plus the tests that touch them. Read it instead of the
+author's description of the change — a summary is written by the same process that wrote
+the code and inherits its blind spots. `claim.sh list --sha HEAD --json` gives you the
+claims and the commands that were actually run.
+
+## Output contract (a script parses this)
+
+One line per finding, exactly:
+
+```
+CONFIRMED <claim-id|-> :: <evidence: file:line, command, verdict field> :: repro: -
+REFUTED   <claim-id|-> :: <the failure, concretely> :: repro: <command that fails today>
+UNPROVEN  <claim-id|-> :: <what is missing> :: repro: -
+```
+
+**Your REFUTED is held to the standard you are applying.** `skeptic.sh record` re-runs
+every repro command: if it exits 0, or you gave none, the finding is downgraded to
+UNPROVEN and the downgrade is recorded. This is not a formality. A skeptic that writes
+"REFUTED: this probably breaks under load" has produced an E0 claim — words, no run — and
+because it sounds rigorous it is trusted more than the claim it refuted. That is the same
+failure you exist to catch, wearing the other costume, and it costs more: it sends people
+to fix what was never broken.
+
+A CONFIRMED is likewise capped at the level the ledger recorded. Your agreement is not a
+run, and cannot raise E2 evidence to E3.
+
+Be brutally concise. Finish with a one-line bottom line: is this delivery honestly done,
+and if not, the single most important thing left to prove.

@@ -1,5 +1,64 @@
 # Changelog
 
+## 2.12.0 — 2026-09-02
+
+The skeptic gets a slice; the guards get a scorecard.
+
+### Added
+
+- **`skeptic.sh` — refutations held to the standard they impose.** The adversarial pass
+  had exactly the weakness it was built to attack. A skeptic that writes *"REFUTED: this
+  probably breaks under concurrency"* has produced an **E0 claim** — words, no run — and
+  because it sounds rigorous, it is trusted more than the claim it just refuted.
+  Skepticism with nothing behind it is not the opposite of overclaiming; it is the same
+  failure wearing the other costume, and it is the more expensive one, because it sends
+  people to fix what was never broken and teaches them to discount the next finding.
+
+  So the rule is symmetric. Every REFUTED carries a command, and the recorder **re-runs
+  it**: reproduces → the refutation stands and opens a lesson; exits 0, or no command →
+  downgraded to UNPROVEN, with the original verdict kept in the record. A CONFIRMED is
+  capped at the level the claims ledger recorded, for the mirror-image reason — agreement
+  is not a run, and cannot turn E2 evidence into E3.
+
+- **A panel, sized to the blast radius.** `intent-skeptic` asks the question no other
+  check asks — *is this the thing that was requested?* Correct code that solves a
+  different problem passes every other gate and is still a failure, usually discovered by
+  the person who asked. `security-skeptic` runs only at L3, where the cost of a defect is
+  not proportional to the size of the diff: a one-character permission change is a breach,
+  a float where money should be an integer is a silent unrefundable loss. Ordinary review
+  allocates attention by lines changed, which is exactly the wrong allocation there.
+
+  Nobody runs at L1. Ceremony for a README edit teaches everyone that the ceremony is
+  noise, which is how the whole apparatus gets skipped on the day it matters.
+
+- **`impact.sh --slice`** — the scope the panel reads: the diff, the first-degree callers
+  of every changed symbol, the tests that touch them. A skeptic handed the whole
+  repository reads none of it; one handed the author's summary audits the summary.
+
+- **`99-skeptic-required`** — WARN when an L3 change has no adversarial pass for the
+  CURRENT commit (a pass recorded before the code moved is not a pass), or when the
+  security-skeptic did not run. FAIL when a reproducing refutation is still open: that is
+  a command that fails today, not an opinion. `requireSkeptic` makes the whole guard a
+  FAIL for teams that have wired the panel up.
+
+- **Guard calibration (`verify.sh --calibration`).** Every guard trades signal against
+  noise and the trade is invisible from inside one run. Three counters make it visible —
+  `fired`, `allowed` (suppressed via `proofgate-allow`, `.proofgateignore`, or a severity
+  override) and `scars` (a recorded incident credited this guard as what would have caught
+  it). High allowed with zero scars is the demotion signal.
+
+  It **reports and never applies**. A tool that quietly turned its own checks off after
+  enough suppressions would be automating precisely the erosion it exists to measure;
+  demoting a guard is a decision for a person, made with the table in front of them. A
+  test asserts that running the report leaves `proofgate.json` byte-identical.
+
+### Fixed
+
+- **The calibration report rendered an empty table.** It split the JSON on quote
+  characters and matched nothing, so the report printed headers and no rows — which reads
+  as "no guard has a problem". A report that silently shows nothing is worse than no
+  report at all.
+
 ## 2.11.0 — 2026-09-02
 
 Experiments where they cannot hurt; prototypes that cannot hide.
