@@ -1,6 +1,6 @@
 {
   "name": "proofgate",
-  "description": "The acceptance gate that doesn't accept 'I think it works.' It measures what a change can break and charges evidence in proportion: docs pay a typecheck, source pays a real end-to-end run, auth/money/migrations pay that plus a mandatory adversarial pass. Claims are recorded by RUNNING the command that proves them, so an evidence level cannot be typed; hypotheses and their refutations survive a context compaction; project memory is anchored to code so stale facts announce themselves; the status block is generated from the ledger, never written; and the whole bundle is sealed to the commit as a git note a reviewer can verify. 23 diff guards, a SHA-bound verdict, and hooks that refuse an unproven push.",
+  "description": "The acceptance gate that doesn't accept 'I think it works.' It measures what a change can break and charges evidence in proportion: docs pay a typecheck, source pays a real end-to-end run, auth/money/migrations pay that plus a mandatory adversarial pass. Claims are recorded by RUNNING the command that proves them, so an evidence level cannot be typed; hypotheses and their refutations survive a context compaction; project memory is anchored to code so stale facts announce themselves; the status block is generated from the ledger, never written; and the whole bundle is sealed to the commit as a git note a reviewer can verify. 25 diff guards, a SHA-bound verdict, and hooks that refuse an unproven push.",
   "version": "3.0.0",
   "author": {
     "name": "Paulo Eduardo",
