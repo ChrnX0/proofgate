@@ -129,7 +129,12 @@ echo "══ pg_match: one grep for the guard, not one per line ═════�
 pg_match_caso() { # pg_match_caso <nome> <entrada> <padrao> <esperado> [-i]
   local nome="$1" entrada="$2" padrao="$3" esperado="$4" ci="${5:-}"
   local saida
-  saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao" $ci))"
+  # shellcheck source=/dev/null
+  if [ -n "$ci" ]; then
+    saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao" "$ci"))"
+  else
+    saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao"))"
+  fi
   if [ "$saida" = "$esperado" ]; then echo "PASS  $nome"; PASS=$((PASS + 1))
   else echo "FAIL  $nome — esperado [$esperado], veio [$saida]"; FAIL=$((FAIL + 1)); fi
 }
