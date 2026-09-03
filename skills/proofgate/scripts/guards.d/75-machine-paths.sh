@@ -11,11 +11,10 @@ PAT='/home/[a-z_][a-z0-9_-]*/|/Users/[^/[:space:]"'"'"']+/|[A-Z]:\\Users\\'  # p
 KEEP='/home/(node|app|runner|deploy|user|ubuntu|vscode|www-data)/'          # proofgate-allow
 tab="$(printf '\t')"; n=0
 while IFS="$tab" read -r file content; do
-  printf '%s' "$content" | grep -Eq "$PAT" || continue
   printf '%s' "$content" | grep -Eq "$KEEP" && continue          # container-idiom path — legitimate
   pg_ignored "$(pg_fingerprint machine-paths "$file" "$content")" && continue
   n=$((n + 1))
-done < <(pg_added_with_file ':(exclude)*.md' ':(exclude)*Dockerfile*' ':(exclude)*.github/*' ':(exclude)*.gitlab-ci*')
+done < <(pg_added_with_file ':(exclude)*.md' ':(exclude)*Dockerfile*' ':(exclude)*.github/*' ':(exclude)*.gitlab-ci*' | pg_match "$PAT")
 if [ "$n" -gt 0 ]; then
   echo "⚠️  machine-paths: $n added line(s) hard-code a local machine path (/home/<you>, /Users/<you>, C:\\Users\\). It works on one box only — use a relative path or an env var."
   exit 2
