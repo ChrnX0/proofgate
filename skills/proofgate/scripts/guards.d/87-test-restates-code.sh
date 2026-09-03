@@ -22,7 +22,7 @@ tab="$(printf '\t')"; n=0
 
 while IFS="$tab" read -r file content; do
   case "$file" in
-    *test*|*spec*|*_test.*|*Test.*) ;;
+    *test*|*spec*|*Test.*) ;;
     *) continue ;;
   esac
 
