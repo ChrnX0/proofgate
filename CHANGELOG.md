@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`87-test-restates-code` — a test that cannot fail.** A QR code's quiet zone is
+  four modules by the standard, so the module exported `QUIET_ZONE = 4` and the
+  test asserted `assert.equal(span, 21 + QUIET_ZONE * 2)`, importing the very
+  constant it was checking. Both sides moved together: a mutant that zeroed the
+  constant kept the test green **twice**, and the margin the standard requires was
+  protected by nothing. A test that restates the code proves the language's
+  arithmetic works, not that the code is right — and the fix is always cheap:
+  write the literal, `assert.equal(span, 29)`, which fails the moment the constant
+  changes. Warns on arithmetic performed on a symbol the test file imports from a
+  relative module; comparing against an imported enum or fixture stays silent,
+  because that is normal and correct.
+
 ## 3.0.0 — 2026-09-02
 
 The proof travels with the commit.

@@ -232,6 +232,26 @@ plant_notmoney(){ echo 'const label = parseFloat(x);' > a.ts; }
 caso "float-money: parseFloat(total) → WARN"     2 85-float-money.sh plant_money
 caso "float-money: non-money float → pass"       0 85-float-money.sh plant_notmoney
 
+# ── 87-test-restates-code ─────────────────────────────────────────────────────
+plant_restates() {
+  mkdir -p src
+  printf 'export const QUIET_ZONE = 4;\n' > src/qr.ts
+  printf "import { QUIET_ZONE, span } from './qr';\nassert.equal(span, 21 + QUIET_ZONE * 2);\n" > src/qr.test.ts
+}
+plant_literal() {
+  mkdir -p src
+  printf 'export const QUIET_ZONE = 4;\n' > src/qr.ts
+  printf "import { span } from './qr';\nassert.equal(span, 29);\n" > src/qr.test.ts
+}
+plant_enum() {
+  mkdir -p src
+  printf 'export const KINDS = { loss: 1 };\n' > src/kinds.ts
+  printf "import { KINDS, classify } from './kinds';\nassert.equal(classify(x), KINDS.loss);\n" > src/kinds.test.ts
+}
+caso "test-restates-code: arithmetic on the module's own constant → WARN" 2 87-test-restates-code.sh plant_restates
+caso "test-restates-code: the literal answer → pass"                      0 87-test-restates-code.sh plant_literal
+caso "test-restates-code: comparing to an imported enum → pass"           0 87-test-restates-code.sh plant_enum
+
 # ── 90-sql-concat ─────────────────────────────────────────────────────────────
 plant_sql()    { echo 'db.query("SELECT id FROM users WHERE x = " + y);' > a.ts; }
 plant_sqlok()  { echo 'db.query(sql`SELECT id FROM users`);' > a.ts; }
