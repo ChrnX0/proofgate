@@ -232,14 +232,51 @@ pg_added_lines() {
   fi | grep -E '^\+' | grep -v '^+++' | grep -v 'proofgate-allow' || true
 }
 
+# pg_match <ERE> [-i] — keep the "<file>\t<line>" records whose CONTENT matches,
+# using ONE grep for the whole stream instead of one grep per line.
+#
+# THE SCAR, measured: on a branch with 31.182 added lines, every diff guard spawned
+# two processes per line and the gate took eight minutes — over a million forks for
+# a run whose actual work is a handful of regex matches. Guards were being charged
+# for process startup, not for scanning.
+#
+# Why not do the matching inside awk, which would need no temp file: the guards'
+# patterns are GNU grep EREs and several use `\b`, which POSIX awk does not know and
+# mawk does not support at all. Translating them would change what a guard matches —
+# and a guard that quietly stops matching is worse than a slow one. So the ERE stays
+# in grep, exactly as written, and only the CONTENT column is fed to it; the line
+# numbers come back and rejoin with the file column, which keeps the "match content,
+# never the path" rule that the per-line loop existed to enforce.
+pg_match() {
+  local pat="$1" ci="${2:-}"
+  local tmp; tmp="$(pg_tmpfile pgmatch)"
+  cat > "$tmp"
+  # `cut -f2-` keeps everything after the FIRST tab: a diff line may contain tabs
+  # of its own, and splitting on all of them would truncate the content.
+  if [ "$ci" = "-i" ]; then
+    cut -f2- "$tmp" | grep -niE -- "$pat" 2>/dev/null | cut -d: -f1 || true
+  else
+    cut -f2- "$tmp" | grep -nE -- "$pat" 2>/dev/null | cut -d: -f1 || true
+  fi | awk 'NR==FNR { keep[$1]; next } FNR in keep' - "$tmp"
+  rm -f "$tmp"
+}
+
+# pg_tmpfile <tag> — a temp file that gets cleaned up even if the guard dies.
+pg_tmpfile() {
+  local f
+  f="$(mktemp "${TMPDIR:-/tmp}/proofgate-$1.XXXXXX" 2>/dev/null)" || f="${TMPDIR:-/tmp}/proofgate-$1.$$"
+  printf '%s' "$f"
+}
+
 # pg_scan <guard-name> <ERE> [extra-pathspecs...] — print the file of each added
 # line matching the pattern, after self-exclusion, proofgate-allow, AND per-finding
 # .proofgateignore suppression. Guards reduce to: count the lines this prints.
 pg_scan() {
   local guard="$1" pat="$2"; shift 2
   local tab; tab="$(printf '\t')"
-  pg_added_with_file "$@" | while IFS="$tab" read -r file content; do
-    printf '%s' "$content" | grep -Eq -- "$pat" || continue     # match CONTENT only, not the path
+  # The fingerprint/suppression pass stays per line — but it now runs only for the
+  # lines that MATCHED, which is a handful, instead of for every added line.
+  pg_added_with_file "$@" | pg_match "$pat" | while IFS="$tab" read -r file content; do
     # A suppressed finding is data, not silence: it is one half of the ratio that says
     # whether this guard is still earning its place.
     if pg_ignored "$(pg_fingerprint "$guard" "$file" "$content")"; then
