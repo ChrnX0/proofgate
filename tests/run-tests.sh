@@ -217,6 +217,14 @@ plant_vacuoussrc() {
 caso "vacuous-negative: absence over a defaulted-empty subject → WARN" 2 56-vacuous-negative.sh plant_vacuous
 caso "vacuous-negative: length asserted first → pass"                  0 56-vacuous-negative.sh plant_vacuousok
 caso "vacuous-negative: same shape in product code → pass"             0 56-vacuous-negative.sh plant_vacuoussrc
+# A aspa simples tem caso próprio: ela entra na expressão por variável, porque o
+# atalho `\x27` é extensão GNU e no awk do macOS sumiria em silêncio.
+plant_vacuousquote() {
+  printf '%s\n' \
+    "const offered = res.items || '';" \
+    'assert.doesNotMatch(offered, /price/);' > a.test.ts
+}
+caso "vacuous-negative: defaulted to an empty single-quoted string → WARN" 2 56-vacuous-negative.sh plant_vacuousquote
 
 # ── 58-frozen-clock ───────────────────────────────────────────────────────────
 plant_clock()  { echo 'const t = Date.now();' > a.test.ts; }

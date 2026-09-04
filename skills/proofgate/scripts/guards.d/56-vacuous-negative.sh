@@ -24,7 +24,16 @@ set -uo pipefail
 # shellcheck source=/dev/null
 . "${PROOFGATE_LIB:-$(dirname "$0")/../lib.sh}" 2>/dev/null || true
 
-REPORT="$(pg_added_with_file ':(exclude)*.md' | awk -F'\t' '
+# A aspa simples entra por variável, e não como `\x27`.
+#
+# O programa do awk vive dentro de aspas simples do shell, então uma aspa literal
+# não cabe nele. O atalho seria `\x27`, que é extensão GNU: no awk do macOS ele
+# pode virar o literal "x27" — e aí o guard para de ver `|| ''` **em silêncio**,
+# com os testes verdes, porque o caso `?? []` continua casando. Guard que deixa de
+# casar caladamente é pior que guard lento, e o teste de portabilidade deste
+# repositório não vigia `\x27`. Construir a expressão por concatenação é POSIX e
+# não depende de qual awk a máquina tem.
+REPORT="$(pg_added_with_file ':(exclude)*.md' | awk -F'\t' -v Q="'" '
   # Only test files: defaulting to empty is ordinary in product code, where it is
   # a fallback and not a claim about coverage.
   $1 !~ /test|spec/ { next }
@@ -36,7 +45,7 @@ REPORT="$(pg_added_with_file ':(exclude)*.md' | awk -F'\t' '
     body[file, n] = line
 
     # A subject defaulted to empty: `const x = a ?? []`, `let y = b || ""`.
-    if (line ~ /(\?\?|\|\|)[ \t]*(\[\]|\x27\x27|""|\{\})/) {                      # proofgate-allow
+    if (line ~ ("(\\?\\?|\\|\\|)[ \t]*(\\[\\]|" Q Q "|\"\"|\\{\\})")) {              # proofgate-allow
       if (match(line, /(const|let|var)[ \t]+[A-Za-z_$][A-Za-z0-9_$]*/)) {
         id = substr(line, RSTART, RLENGTH)
         sub(/^(const|let|var)[ \t]+/, "", id)
