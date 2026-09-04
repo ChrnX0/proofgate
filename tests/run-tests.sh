@@ -219,6 +219,21 @@ plant_debug()  { echo 'debugger; // wip' > a.ts; }
 caso "debug: it.only → FAIL"                     1 70-debug-leftovers.sh plant_only
 caso "debug: debugger → WARN"                    2 70-debug-leftovers.sh plant_debug
 caso "debug: clean diff → pass"                  0 70-debug-leftovers.sh plant_clean
+# A marca tem que parecer uma marca. `\b(TODO)\b` casava a PALAVRA, e em português
+# "todo" é palavra comum — num commit real do ChrnX0/Norva o guard acusou três
+# marcas frescas e as três eram prosa em português. Guard que acusa o que não
+# existe ensina a ignorar o que ele diz, e aí o TODO de verdade passa junto.
+plant_todo_marca()  { printf '// TODO: voltar aqui\nconst a = 1;\n' > a.ts; }
+plant_todo_autor()  { printf 'const a = 1; // TODO(alice): rever\n' > a.ts; }
+plant_todo_hash()   { printf '# FIXME rever isto\nx = 1\n' > a.py; }
+# Prosa em português: "todo" em maiúscula por ênfase, dentro de uma frase.
+plant_todo_prosa()  { printf '// Apagar compras leva TODO movimento da fábrica.\nconst a = 1;\n' > a.ts; }
+plant_todo_frase()  { printf 'const m = "isso apaga TODO o livro-razão";\n' > a.ts; }
+caso "debug: // TODO: marker → WARN"             2 70-debug-leftovers.sh plant_todo_marca
+caso "debug: TODO(author): marker → WARN"        2 70-debug-leftovers.sh plant_todo_autor
+caso "debug: # FIXME after opener → WARN"        2 70-debug-leftovers.sh plant_todo_hash
+caso "debug: Portuguese 'TODO' in prose → pass"  0 70-debug-leftovers.sh plant_todo_prosa
+caso "debug: Portuguese 'TODO' in string → pass" 0 70-debug-leftovers.sh plant_todo_frase
 
 # ── 75-machine-paths ──────────────────────────────────────────────────────────
 plant_home()   { echo 'const p = "/home/alice/proj/x";' > a.ts; }
