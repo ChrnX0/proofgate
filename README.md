@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/ChrnX0/proofgate/main/install.sh | 
 bash .proofgate/verify.sh
 ```
 
-No config. ProofGate auto-detects your stack (pnpm · npm · yarn · bun · Cargo · Go · Python · Gradle/Maven · .NET · Ruby · PHP · Elixir · Deno) and judges **the diff you're about to ship** with 23 guards:
+No config. ProofGate auto-detects your stack (pnpm · npm · yarn · bun · Cargo · Go · Python · Gradle/Maven · .NET · Ruby · PHP · Elixir · Deno) and judges **the diff you're about to ship** with 24 guards:
 
 ```
 ── ProofGate · mechanical gate ─────────────────────────────
@@ -60,7 +60,7 @@ A **delivery gate** that sits between *"the code is written"* and *"the work is 
 | Layer | What | Who runs it |
 |---|---|---|
 | **0 · Blast radius** | what this diff can break — changed symbols, their callers, affected tests — over the **whole branch + your working tree**, classified **L1/L2/L3**. That class sets the price of the gate: docs pay E1, source pays E3, auth/money/migrations also pay a mandatory skeptic | a script — `impact.sh` |
-| **1 · Mechanical** | tests · lint · push state · **23 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, version-bumped-but-never-released, …) → a **SHA-bound verdict** | a script — `verify.sh` |
+| **1 · Mechanical** | tests · lint · push state · **24 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, version-bumped-but-never-released, …) → a **SHA-bound verdict** | a script — `verify.sh` |
 | **2 · Judgment** | root cause + counter-proof · an **evidence hierarchy** (believed → static → tested → exercised → in-prod; "done" needs ≥ exercised) · **diagnosis as a falsifiable hypothesis that survives a context compaction** · a status **generated from the ledger, never typed** | `claim.sh` · `hypothesis.sh` · `memory.sh` |
 | **3 · Adversarial** | a **default-refute panel**, sized to the radius, tries to break every "it works" claim — and every refutation is itself re-run, so a skeptic cannot assert a break either | `gate-skeptic` · `intent-skeptic` · `security-skeptic` |
 | **4 · Enforcement** | hooks refuse to `git push` — or (opt-in) to declare *done* — without a fresh passing verdict, and (opt-in) to edit source while a bugfix has no failing test | `push-guard` · `stop-guard` · `edit-guard` |
@@ -207,6 +207,7 @@ Every automated check is a small script in [`guards.d/`](skills/proofgate/script
 | `85-float-money` | money through a float (`parseFloat`, `.toFixed`) | ⚠️ |
 | `90-sql-concat` | SQL built by string concatenation | ⚠️ |
 | `93-hypothesis-required` | a fix branch with no recorded hypothesis — a cause never written down is never falsified | ⚠️ |
+| `94-two-release-publishers` | two workflows publish under a tag each computes itself | ⚠️ |
 | `95-schema-constraint-no-migration` | a constraint added to a table with no migration for it | ⚠️ |
 | `96-version-bump-no-release` | the version moved and no release was ever cut | ⚠️ |
 | `97-memory-stale` | a recorded fact is anchored to a file in this diff, and the anchor no longer matches | ⚠️ |
