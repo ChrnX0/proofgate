@@ -196,6 +196,28 @@ plant_noskip() { echo 'it("x", () => {});' > a.test.ts; }
 caso "skipped-tests: .skip added → WARN"         2 55-skipped-tests.sh plant_skip
 caso "skipped-tests: normal test → pass"         0 55-skipped-tests.sh plant_noskip
 
+# ── 56-vacuous-negative ───────────────────────────────────────────────────────
+plant_vacuous() {
+  printf '%s\n' \
+    'const offered = (answer.detail ?? []).map((d) => d.value).join(" ");' \
+    'assert.doesNotMatch(offered, /price/);' > a.test.ts
+}
+plant_vacuousok() {
+  printf '%s\n' \
+    'const offered = (answer.detail ?? []).map((d) => d.value).join(" ");' \
+    'assert.ok(offered.length > 0, "there is something to compare");' \
+    'assert.doesNotMatch(offered, /price/);' > a.test.ts
+}
+# Product code defaults to empty all the time and claims nothing about coverage.
+plant_vacuoussrc() {
+  printf '%s\n' \
+    'const offered = (answer.detail ?? []).map((d) => d.value).join(" ");' \
+    'assert.doesNotMatch(offered, /price/);' > a.ts
+}
+caso "vacuous-negative: absence over a defaulted-empty subject → WARN" 2 56-vacuous-negative.sh plant_vacuous
+caso "vacuous-negative: length asserted first → pass"                  0 56-vacuous-negative.sh plant_vacuousok
+caso "vacuous-negative: same shape in product code → pass"             0 56-vacuous-negative.sh plant_vacuoussrc
+
 # ── 58-frozen-clock ───────────────────────────────────────────────────────────
 plant_clock()  { echo 'const t = Date.now();' > a.test.ts; }
 plant_clockok(){ echo 'const t = Date.now();' > a.ts; }
