@@ -12,7 +12,7 @@
     {
       "name": "proofgate",
       "source": "./",
-      "description": "A delivery gate that charges in proportion to what the change can break, and where evidence is EARNED rather than typed: claims are recorded by running the command that proves them, refutations outlive a context compaction, memory anchored to code announces its own staleness, the status is generated from the ledger, and the proof is sealed to the commit as a git note CI verifies. 23 diff guards, a SHA-bound verdict, hooks that refuse an unproven push. Born from real production scars in AI-assisted development.",
+      "description": "A delivery gate that charges in proportion to what the change can break, and where evidence is EARNED rather than typed: claims are recorded by running the command that proves them, refutations outlive a context compaction, memory anchored to code announces its own staleness, the status is generated from the ledger, and the proof is sealed to the commit as a git note CI verifies. 24 diff guards, a SHA-bound verdict, hooks that refuse an unproven push. Born from real production scars in AI-assisted development.",
       "author": {
         "name": "Paulo Eduardo",
         "url": "https://github.com/ChrnX0"

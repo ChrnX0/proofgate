@@ -238,6 +238,65 @@ plant_sqlok()  { echo 'db.query(sql`SELECT id FROM users`);' > a.ts; }
 caso "sql-concat: concatenated SQL → WARN"       2 90-sql-concat.sh plant_sql
 caso "sql-concat: tagged template → pass"        0 90-sql-concat.sh plant_sqlok
 
+# ── 94-two-release-publishers ─────────────────────────────────────────────────
+# The sin: two workflows that each derive the release tag from the manifest, so both
+# write the same single-writer namespace and dispatch order decides the winner. The scar
+# landed a 110 MiB binary from 177 commits back inside the good release, beside the good
+# one, under a note naming the good commit.
+#
+# The content goes in by QUOTED heredoc, and that is a scar of its own: written first as
+# `PUB=$(printf "... $(node -p 1) ...")`, the command substitution ran at assignment and
+# the planted workflow reached disk with its tag lines emptied. The four negative cases
+# still passed — an empty file is a fine negative — so only the positive spoke up. A
+# harness that plants the wrong sin makes every negative meaningless.
+pub_computa() { mkdir -p .github/workflows; cat > ".github/workflows/$1" <<'YAML'
+jobs:
+  b:
+    steps:
+      - run: |
+          VERSION=$(node -p "require('./app.json').version")
+          TAG="apk-$VERSION"
+          gh release create "$TAG" a.apk || gh release upload "$TAG" a.apk --clobber
+YAML
+}
+# A publisher the CALLER aims: the tag comes from the pushed ref, so it cannot collide
+# silently with another workflow's idea of the tag. This is the designed-pair case — one
+# creates the release, another adds assets to the tag it was handed.
+pub_do_evento() { mkdir -p .github/workflows; cat > ".github/workflows/$1" <<'YAML'
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  r:
+    steps:
+      - run: gh release upload "${{ github.ref_name }}" extra.zip
+YAML
+}
+# Reading a release is not publishing one.
+pub_leitor() { mkdir -p .github/workflows; cat > ".github/workflows/$1" <<'YAML'
+jobs:
+  r:
+    steps:
+      - run: gh release view --json url -q .url
+YAML
+}
+manifesto() { printf '{\n  "version": "0.9.0"\n}\n' > app.json; }
+plant_dois()      { manifesto; pub_computa build.yml;   pub_computa publish.yml; }
+plant_um()        { manifesto; pub_computa build.yml; }
+plant_par()       { manifesto; pub_computa build.yml;   pub_do_evento assets.yml; }
+plant_leitor()    { manifesto; pub_computa build.yml;   pub_leitor docs.yml; }
+# The occasion is what the diff decides. Two publishers already in the BASE, and a diff
+# touching neither CI nor a version, must stay quiet: state without an occasion is not the
+# moment to ask. Verified against the real scar repo too, where a commit that closed an
+# unrelated item left both publishers in place and this stayed silent.
+plant_semocasiao(){ plant_dois; git add -A >/dev/null 2>&1; git commit -qm base2 >/dev/null 2>&1
+                    printf 'const x = 1;\n' > src.ts; }
+caso "release-publishers: two self-computed tags → WARN"   2 94-two-release-publishers.sh plant_dois
+caso "release-publishers: only one publisher → pass"       0 94-two-release-publishers.sh plant_um
+caso "release-publishers: second is caller-aimed → pass"   0 94-two-release-publishers.sh plant_par
+caso "release-publishers: second only reads → pass"        0 94-two-release-publishers.sh plant_leitor
+caso "release-publishers: no release occasion → pass"      0 94-two-release-publishers.sh plant_semocasiao
+
 # ── 95-schema-constraint-no-migration ─────────────────────────────────────────
 # The sin: tightening a column inside `create table if not exists` — a no-op on any
 # database that already has the table, so the constraint never reaches production.
