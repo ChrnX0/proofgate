@@ -1,5 +1,22 @@
 # Changelog
 
+## 3.0.2 — 2026-09-13
+
+The background job's exit code is not the fork's.
+
+### Fixed
+
+- **The excuse-breaker row added in 3.0.1 covered `cmd &` but prescribed a recipe that
+  only works in the foreground.** `$?` immediately after launching a background job
+  reports that the fork started, not how the job ended — so the row could certify a
+  failed check as exit 0, which is the exact mistake it exists to stop. It now gives
+  both forms: `cmd > out.txt 2>&1; echo $?` in the foreground, and
+  `cmd > out.txt 2>&1 & pid=$!; wait "$pid"; echo $?` in the background, with the note
+  that a backgrounded pipeline still needs `set -o pipefail`. The mirror in
+  `agents/gate-skeptic.md` carries the same correction.
+
+  Found by an automated reviewer on the 3.0.1 pull request, after the merge.
+
 ## 3.0.1 — 2026-09-13
 
 Read the exit code of the command, not of the pipe.
