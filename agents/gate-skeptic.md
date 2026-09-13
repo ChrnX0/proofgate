@@ -54,7 +54,9 @@ Specifically hunt for:
    but only dev was exercised. Was the prod path smoked with a marker UNIQUE to
    the new version (not a string present in the old one too)?
 5. **The self-report trap.** "A subagent said it passed" / "CI is green" — did
-   anyone read the actual output, exit code, and failure count?
+   anyone read the actual output, exit code, and failure count? Of the COMMAND
+   itself: a pipeline (`cmd | tail`) exits with the last command's status, and the
+   tail of the output is the package manager's notice, not the errors above it.
 
 ## Read the slice, not the summary
 
