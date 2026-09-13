@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.1 — 2026-09-13
+
+Read the exit code of the command, not of the pipe.
+
+### Added
+
+- **Excuse-breaker row: "I ran `cmd | tail`, exit 0, the end of the output was clean."**
+  A pipeline exits with the LAST command's status, and the tail of a tool's output is
+  the package manager's update notice — the errors sit above it. A typecheck with 300+
+  errors (every relative import of freshly split modules pointing one directory up) was
+  declared green exactly this way; the test suite caught it. The row states the recipe:
+  output to a file, the command's own `$?`, count the signal, and **sabotage the check
+  on purpose once** so you have seen it catch something before you trust its silence.
+
 ## 3.0.0 — 2026-09-02
 
 The proof travels with the commit.
