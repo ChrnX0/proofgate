@@ -12,12 +12,11 @@ SQL='SELECT[[:space:]].*[[:space:]]FROM[[:space:]]|INSERT[[:space:]]+INTO[[:spac
 CONCAT='["'"'"'`][[:space:]]*\+|\+[[:space:]]*["'"'"'`]|\$\{|%s|%d|f["'"'"']|\.format[[:space:]]*\(|\|\|[[:space:]]*[[:alnum:]_]'  # proofgate-allow
 tab="$(printf '\t')"; n=0
 while IFS="$tab" read -r file content; do
-  printf '%s' "$content" | grep -Eiq "$SQL"    || continue       # a SQL verb AND
-  printf '%s' "$content" | grep -Eq  "$CONCAT"  || continue       # a concat/interp on the same line
-  printf '%s' "$content" | grep -Eq  'sql`'     && continue       # tagged template `sql`...`` is safe
+  printf '%s' "$content" | grep -Eq 'sql`' && continue           # tagged template `sql`...`` is safe
   pg_ignored "$(pg_fingerprint sql-concat "$file" "$content")" && continue
   n=$((n + 1))
-done < <(pg_added_with_file ':(exclude)*.md' ':(exclude)*test*' ':(exclude)*spec*')
+done < <(pg_added_with_file ':(exclude)*.md' ':(exclude)*test*' ':(exclude)*spec*' \
+  | pg_match "$SQL" -i | pg_match "$CONCAT")
 if [ "$n" -gt 0 ]; then
   echo "⚠️  sql-concat: $n added line(s) build SQL by string concat/interpolation — an injection risk. Use parameterized/bound queries. (Query-builder false positive? suppress with proofgate-allow.)"
   exit 2
