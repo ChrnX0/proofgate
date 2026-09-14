@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "ProofGate — the acceptance gate that doesn't accept 'I think it works.'",
-    "version": "3.0.1"
+    "version": "3.0.2"
   },
   "plugins": [
     {
