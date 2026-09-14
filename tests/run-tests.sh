@@ -626,6 +626,23 @@ plant_sigraw() {
 caso "signature-raw-body: HMAC over parsed body → WARN"  2 92-signature-raw-body.sh plant_sigparsed
 caso "signature-raw-body: HMAC over raw text → pass"     0 92-signature-raw-body.sh plant_sigraw
 
+# ── 94-verdict-from-exit-code ─────────────────────────────────────────────────
+# The sin: a pass/fail decision read from matched OUTPUT instead of the exit code —
+# the filter can cut the very line that reports the failure.
+plant_verdictgrep() {
+  printf '#!/usr/bin/env bash\n# example of the sin: out=$(vitest run x | tail -3)\nout=$(npx vitest run target | tail -3)\nif echo "$out" | grep -q "failed"; then echo KILLED; else echo SURVIVED; fi\n' > mutate.sh
+}
+plant_verdictexit() {
+  printf '#!/usr/bin/env bash\nif npx vitest run target > out.log 2>&1; then echo SURVIVED; else echo KILLED; fi\ngrep -c FAIL out.log\n' > mutate.sh
+}
+# Reading output for DISPLAY is legitimate — only capture/condition is the sin.
+plant_verdictread() {
+  printf '#!/usr/bin/env bash\nnpx vitest run target | tail -20\n' > mutate.sh
+}
+caso "verdict-from-exit-code: grep on output decides → WARN"   2 94-verdict-from-exit-code.sh plant_verdictgrep
+caso "verdict-from-exit-code: exit code decides → pass"        0 94-verdict-from-exit-code.sh plant_verdictexit
+caso "verdict-from-exit-code: piping only to READ → pass"      0 94-verdict-from-exit-code.sh plant_verdictread
+
 # ── 93-hypothesis-required ────────────────────────────────────────────────────
 plant_fixbranch()   { git checkout -qb fix/login 2>/dev/null; echo 'export const x=2;' > a.ts; }
 plant_featbranch()  { git checkout -qb feat/new 2>/dev/null; echo 'export const x=2;' > a.ts; }
