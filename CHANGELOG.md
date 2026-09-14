@@ -1,5 +1,37 @@
 # Changelog
 
+## 3.3.0 — 2026-09-14
+
+A signature covers bytes, and a JSON column may rewrite them.
+
+### Added
+
+- **`92-signature-raw-body` now covers the SENDING side**: an HMAC computed over
+  `JSON.stringify(<variable>)`. You can only reproduce a signature over text you KEPT —
+  sign a re-serialization and the original is gone. The scar: a webhook retry rebuilt the
+  body from a `jsonb` column, and jsonb NORMALIZES (reorders keys, strips whitespace), so
+  the digest moved and the subscriber rejected every redelivery.
+
+  What makes this one nasty is where it hides. The development database stored that same
+  column as TEXT, where parse-then-stringify round-trips byte-identical **by accident** —
+  so no local test could see the divergence, and the defect would have debuted in
+  production, in the most confusing possible form ("the retry does not work and I cannot
+  tell why"). It surfaced only because a planted mutation *survived*, and the question
+  "in which dialect does this diverge?" was asked instead of "the mutation must be
+  harmless".
+
+  Signing an inline object literal stays exempt: there is no earlier text to be faithful
+  to. Signing a variable is what the guard flags.
+
+### Changed
+
+- **One row in the excuse-buster table**: "I re-sign the payload before resending it" →
+  can you reproduce the exact text you signed? Keep the signed bytes in a `text` column;
+  a row without them is not retryable and should say so, rather than going out with a
+  signature that cannot match.
+- Test suite 249 → 252 cases for this guard (re-serialized variable warns; the kept text
+  passes; an inline literal passes).
+
 ## 3.2.0 — 2026-09-14
 
 A verdict is an exit code, not a word you found in the output.

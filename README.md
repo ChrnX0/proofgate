@@ -213,7 +213,7 @@ Every automated check is a small script in [`guards.d/`](skills/proofgate/script
 | `98-unlearned-lessons` | an incident with nothing enforcing its lesson yet | ⚠️ |
 | `99-skeptic-required` | an L3 change with no adversarial pass — or one whose refutations still reproduce | ⚠️ / ❌ |
 
-**Every guard is proven on both paths** — fires on the sin, stays quiet on a clean diff — by [`tests/run-tests.sh`](tests/run-tests.sh) (**249 cases**, engine, hooks, ledgers and scripts included), on every push, on Linux **and** macOS, in [this repo's own CI](https://github.com/ChrnX0/proofgate/actions).
+**Every guard is proven on both paths** — fires on the sin, stays quiet on a clean diff — by [`tests/run-tests.sh`](tests/run-tests.sh) (**254 cases**, engine, hooks, ledgers and scripts included), on every push, on Linux **and** macOS, in [this repo's own CI](https://github.com/ChrnX0/proofgate/actions).
 
 On top of that, [`tests/acceptance.sh`](tests/acceptance.sh) drives **the whole protocol end to end in a real repository with a real remote** — 18 steps, from measuring the radius to detecting a tampered proof note. That distinction is not ceremony: it caught three defects the unit suite could not see — including one introduced by a fix that every unit test approved. Every piece obeying its spec is not the same as the path through them working — which is, more or less, this entire project's thesis applied to itself.
 

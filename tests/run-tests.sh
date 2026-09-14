@@ -625,6 +625,22 @@ plant_sigraw() {
 }
 caso "signature-raw-body: HMAC over parsed body → WARN"  2 92-signature-raw-body.sh plant_sigparsed
 caso "signature-raw-body: HMAC over raw text → pass"     0 92-signature-raw-body.sh plant_sigraw
+# The same mistake from the SENDING side: signing a re-serialization of a value you
+# read back. A jsonb column reorders keys, the digest moves, and every redelivery is
+# rejected — while a dev database storing that column as TEXT hides it completely.
+plant_signreserial() {
+  printf 'const mac = createHmac("sha256", secret).update(JSON.stringify(row.payload)).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+plant_signkept() {
+  printf 'const body = row.signed_body;\nconst mac = createHmac("sha256", secret).update(body).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+# Signing an inline literal is exempt: there is no earlier text to be faithful to.
+plant_signliteral() {
+  printf 'const mac = createHmac("sha256", secret).update(JSON.stringify({ ping: 1 })).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+caso "signature-raw-body: HMAC over a re-serialized variable → WARN" 2 92-signature-raw-body.sh plant_signreserial
+caso "signature-raw-body: HMAC over the kept text → pass"           0 92-signature-raw-body.sh plant_signkept
+caso "signature-raw-body: HMAC over an inline literal → pass"       0 92-signature-raw-body.sh plant_signliteral
 
 # ── 94-verdict-from-exit-code ─────────────────────────────────────────────────
 # The sin: a pass/fail decision read from matched OUTPUT instead of the exit code —
