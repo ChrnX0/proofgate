@@ -1,5 +1,31 @@
 # Changelog
 
+## 3.1.0 — 2026-09-14
+
+An HMAC covers the bytes that arrived.
+
+### Added
+
+- **Guard `92-signature-raw-body`** — a webhook whose signature is verified against a
+  RE-SERIALIZED body. `X-Hub-Signature-256`, `Stripe-Signature` and friends are an HMAC
+  of the bytes that arrived; parse the body first and hash `JSON.stringify(parsed)` and
+  you are digesting a different text — one space, one key order, one unicode escape
+  apart. The failure is quiet in the worst way: every legitimate delivery is rejected,
+  and the fix someone reaches for is deleting the check, which leaves the endpoint open
+  to anyone on the internet. The guard fires when a file touched by the diff verifies a
+  signature AND reads its body through `.json()`, and separately when `timingSafeEqual`
+  appears with no length comparison — it THROWS on buffers of different lengths, so a
+  forged short signature becomes a 500 with a stack trace instead of a clean 401.
+
+  The trigger is the FILE's content, not the added lines: in a real regression what
+  changes is how the body is read, while the HMAC line sits untouched. A first version
+  that only inspected added lines let exactly that sin through, and was caught by
+  deliberately planting it.
+
+- **Excuse-breaker row: "The webhook verifies its signature, so the endpoint is safe."**
+  Against which bytes? Plus the negative path the row demands: no signature, and a
+  signature made with the wrong secret, each asserting that NOTHING was written.
+
 ## 3.0.2 — 2026-09-13
 
 The background job's exit code is not the fork's.
