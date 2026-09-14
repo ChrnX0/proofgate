@@ -614,6 +614,18 @@ SECOND="$(hy "$D3" open --kind diagnosis --symptom once --hypothesis "second ide
 ok_t "$(printf '%s' "$SECOND" | grep -q ESCALATED && echo 0 || echo 1)" "hypothesis: one refutation does NOT escalate (negative)"
 rm -rf "$D2" "$D3"
 
+# ── 92-signature-raw-body ─────────────────────────────────────────────────────
+# The sin: HMAC over a body that was parsed and re-serialized — the digest covers a
+# different text than the one that arrived, so every legitimate delivery is rejected.
+plant_sigparsed() {
+  printf 'const body = await req.json();\nconst mac = createHmac("sha256", secret).update(JSON.stringify(body)).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > hook.ts
+}
+plant_sigraw() {
+  printf 'const raw = await req.text();\nconst mac = createHmac("sha256", secret).update(raw).digest();\nif (mac.length !== got.length) return r401();\nconst body = JSON.parse(raw);\n' > hook.ts
+}
+caso "signature-raw-body: HMAC over parsed body → WARN"  2 92-signature-raw-body.sh plant_sigparsed
+caso "signature-raw-body: HMAC over raw text → pass"     0 92-signature-raw-body.sh plant_sigraw
+
 # ── 93-hypothesis-required ────────────────────────────────────────────────────
 plant_fixbranch()   { git checkout -qb fix/login 2>/dev/null; echo 'export const x=2;' > a.ts; }
 plant_featbranch()  { git checkout -qb feat/new 2>/dev/null; echo 'export const x=2;' > a.ts; }
