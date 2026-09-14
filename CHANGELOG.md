@@ -1,5 +1,44 @@
 # Changelog
 
+## 3.2.0 — 2026-09-14
+
+A verdict is an exit code, not a word you found in the output.
+
+### Added
+
+- **Guard `94-verdict-from-exit-code`** — a pass/fail decision read from matched OUTPUT
+  instead of the process's exit status. The scar: a mutation run reported SURVIVED for
+  five mutations in a row, one of them re-introducing the exact regression the tests had
+  just been written to catch. The tests were fine; the judge was
+  `out=$(runner | tail -3); if echo "$out" | grep -q failed; …` — and `tail -3` of that
+  runner returns "Start at" and "Duration", cutting above the `Tests N failed` line. The
+  grep could never match, so "I did not find a failure" silently became "it passed".
+
+  Output filters are for COUNTING once you already know it failed, never for deciding
+  whether it failed: runners reword their summaries between versions, localize them,
+  hide them behind a progress bar, or push them past whatever `tail`/`head` kept — and
+  every one of those turns a red run green. The discriminator the guard uses is
+  capture-or-condition: piping output to `tail` just to READ it is fine; using that text
+  as the verdict — inside an `if`, behind `&&`/`||`, or captured into `$( )` — is the
+  sin. Comment lines are excluded, since they decide nothing and the guard would
+  otherwise flag the example in its own header.
+
+  Sibling of the 3.0.1 excuse-breaker, where a PIPELINE's `$?` was the last command's:
+  there the exit code was read from the wrong process, here it is not read at all.
+
+### Changed
+
+- **Two rows in the excuse-buster table.** One for mutation testing: a run is only
+  meaningful with an UNMUTATED baseline that comes back green and a harmless SENTINEL
+  that must survive — a dead sentinel means the judge fails everything, and everything
+  surviving alongside it means the judge passes everything. One for faked clocks: a
+  fake-timer moves the process clock only, so a column default is still the database's
+  clock and an application timestamp a third; pinning only one end produced a metric
+  where every row landed in the same bucket, and hid a production defect where the
+  resulting negative interval was clamped to zero.
+- Guard count 24 → 25; test suite 246 → 249 cases (three for the new guard: the sin, the
+  exit-code rewrite, and output piped only for DISPLAY, which must stay quiet).
+
 ## 3.1.0 — 2026-09-14
 
 An HMAC covers the bytes that arrived.
