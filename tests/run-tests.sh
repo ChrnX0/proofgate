@@ -1266,6 +1266,106 @@ ac=0; ( cd "$AU" && printf 'not json' | bash "$ROOT/hooks/audit-hook.sh" ) >/dev
 ok_t "$([ "$ac" = 0 ] && echo 1 || echo 0)" "audit: malformed stdin → fail-open"
 rm -rf "$AU"
 
+echo "══ mutation --list: a curated list, judged three ways ═══════"
+MUTL="$ROOT/skills/proofgate/scripts/mutate.mjs"
+MUTG="$GUARDS/88-mutation.sh"
+if command -v node >/dev/null 2>&1; then
+  mu_repo() { # a toy project: one rule (round), a floor, a suite that only checks the round
+    local d; d="$(mktemp -d)"
+    ( cd "$d" && git init -q -b main && git config user.email t@t && git config user.name t && mkdir src \
+      && printf 'exports.round = (x) => Math.round(x);\nexports.floor1 = (n) => Math.max(1, n);\n' > src/price.js \
+      && printf '#!/bin/sh\nnode -e "const p=require(\\"./src/price.js\\"); if (p.round(2.5)!==3) process.exit(1)"\n' > test.sh && chmod +x test.sh \
+      && printf '{"mutation":{"list":"m.jsonl","command":"./test.sh"}}\n' > proofgate.json \
+      && printf '{"file":"src/price.js","from":"Math.round(x)","to":"Math.floor(x)","hurts":"a price rounded down sells under cost"}\n' > m.jsonl \
+      && git add -A && git commit -qm base ) >/dev/null 2>&1
+    echo "$d"
+  }
+  mu() { local d="$1"; shift; local c=0; ( cd "$d" && node "$MUTL" --list m.jsonl "$@" ) > "$d/mu.out" 2>&1 || c=$?; echo "$c"; }
+  mu_guard() { local c=0; ( cd "$1" && PROOFGATE_BASE="${2:-HEAD}" PROOFGATE_CFG=proofgate.json bash "$MUTG" ) > "$1/g.out" 2>&1 || c=$?; echo "$c"; }
+  mu_ok() { [ "$1" = "$2" ] && echo 1 || echo 0; }
+
+  # the runner
+  MD="$(mu_repo)"
+  ok_t "$(mu_ok "$(mu "$MD" -- ./test.sh)" 0)" "mutate --list: a mutation the suite sees → caught, exit 0"
+  ok_t "$(grep -q '1 caught, 0 equivalent, 0 survived, 0 not measured' "$MD/mu.out" && echo 1 || echo 0)" "mutate --list: the report's arithmetic closes (1 caught)"
+  printf '{"file":"src/price.js","from":"Math.max(1, n)","to":"n","hurts":"a zero quantity gets through the floor"}\n' >> "$MD/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$MD" -- ./test.sh)" 1)" "mutate --list: a mutation the suite cannot see → SURVIVED, exit 1 (positive)"
+  ok_t "$(grep -q 'SURVIVED' "$MD/mu.out" && grep -q 'zero quantity' "$MD/mu.out" && echo 1 || echo 0)" "mutate --list: the survivor is named with the damage sentence"
+  ok_t "$(git -C "$MD" diff --quiet -- src test.sh && echo 1 || echo 0)" "mutate --list: the working tree is never touched"
+
+  # not measured is NOT caught
+  MU="$(mu_repo)"
+  printf '#!/bin/sh\nif grep -q "Math.floor" src/price.js; then sleep 5; fi\nnode -e "const p=require(\\"./src/price.js\\"); if (p.round(2.5)!==3) process.exit(1)"\n' > "$MU/test.sh"
+  ok_t "$(mu_ok "$(mu "$MU" --timeout 1 -- ./test.sh)" 1)" "mutate --list: a suite killed by timeout is NOT MEASURED, never 'caught' (exit 1)"
+  ok_t "$(grep -q '0 caught, 0 equivalent, 0 survived, 1 not measured' "$MU/mu.out" && echo 1 || echo 0)" "mutate --list: unmeasured is counted on its own line of the arithmetic"
+
+  # anchors: stale and ambiguous are unmeasured, and --check says so without running anything
+  MA="$(mu_repo)"
+  printf '{"file":"src/price.js","from":"no longer here","to":"x","hurts":"stale"}\n{"file":"src/price.js","from":"Math.","to":"Nath.","hurts":"ambiguous"}\n' >> "$MA/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$MA" --check)" 1)" "mutate --check: stale + ambiguous anchors → exit 1, no suite run"
+  ok_t "$(mu_ok "$(mu "$MA" -- ./test.sh)" 1)" "mutate --list: a stale/ambiguous anchor fails the run (2 not measured)"
+  ok_t "$(mu_ok "$(mu "$(mu_repo)" --check)" 0)" "mutate --check: a clean list → exit 0 (negative)"
+
+  # equivalent: needs a reason, and being caught turns the marker into an error
+  ME="$(mu_repo)"
+  printf '{"file":"src/price.js","from":"Math.round(x)","to":"Math.floor(x)","hurts":"x","equivalent":"supposedly no test can tell"}\n' > "$ME/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$ME" -- ./test.sh)" 1)" "mutate --list: marked equivalent but CAUGHT → wrong marker, exit 1"
+  printf '{"file":"src/price.js","from":"exports.floor1 = (n) => Math.max(1, n);","to":"exports.floor1 = (n) => Math.max(1, n); /* c */","hurts":"x","equivalent":"a comment"}\n' > "$ME/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$ME" -- ./test.sh)" 0)" "mutate --list: a true equivalent, with its reason, is accepted (negative)"
+  printf '{"file":"src/price.js","from":"a","to":"b","hurts":"x","equivalent":""}\n' > "$ME/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$ME" --check)" 2)" "mutate --list: an equivalent marker with no written reason → refused (exit 2)"
+
+  # judge sanity
+  MB="$(mu_repo)"
+  ok_t "$(mu_ok "$(mu "$MB" -- false)" 2)" "mutate --list: a red baseline → refused (exit 2), nothing is 'caught'"
+  MJ="$(mu_repo)"; printf '#!/bin/sh\nnode -e "if(require(\\"fs\\").readFileSync(\\"src/price.js\\",\\"utf8\\").endsWith(\\"\\\\n\\\\n\\"))process.exit(1)"\n' > "$MJ/test.sh"
+  ok_t "$(mu_ok "$(mu "$MJ" -- ./test.sh)" 2)" "mutate --list: a suite that fails a harmless sentinel → BROKEN JUDGE (exit 2)"
+  ok_t "$(mu_ok "$(mu "$(mu_repo)" --slice 3/2 -- ./test.sh)" 2)" "mutate --list: an invalid --slice is refused, not read as the whole list"
+
+  # slices cover the list once; the verdict is complete only when every slice is in
+  MS="$(mu_repo)"
+  printf '{"file":"src/price.js","from":"Math.max(1, n)","to":"Math.min(1, n)","hurts":"floor becomes a ceiling"}\n' >> "$MS/m.jsonl"
+  sed -i.bak 's#test.sh#test.sh#' "$MS/m.jsonl" && rm -f "$MS/m.jsonl.bak"
+  printf '#!/bin/sh\nnode -e "const p=require(\\"./src/price.js\\"); if (p.round(2.5)!==3||p.floor1(0)!==1) process.exit(1)"\n' > "$MS/test.sh"
+  ok_t "$(mu_ok "$(mu "$MS" --slice 1/2 -- ./test.sh)" 0)" "mutate --slice 1/2: judges only its half"
+  ok_t "$(grep -q '1 mutation(s) (slice 1/2 of 2)' "$MS/mu.out" && echo 1 || echo 0)" "mutate --slice: the report says which slice of how many"
+  ok_t "$(mu_ok "$(mu "$MS" --status)" 2)" "mutate --status: one slice of two is an INCOMPLETE verdict → warn"
+  mu "$MS" --slice 2/2 -- ./test.sh >/dev/null
+  ok_t "$(mu_ok "$(mu "$MS" --status)" 0)" "mutate --status: both slices in → complete and recent (negative)"
+  ( cd "$MS" && sed 's#"ts": "[^"]*"#"ts": "2020-01-01T00:00:00.000Z"#' .git/proofgate-mutation.json > v.tmp && mv v.tmp .git/proofgate-mutation.json )
+  ok_t "$(mu_ok "$(mu "$MS" --status --max-age-days 14)" 2)" "mutate --status: a verdict years old → stale, warn"
+  rm -rf "$MS"
+
+  # the guard
+  MG="$(mu_repo)"
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 2)" "88-mutation: configured, never run → WARN (no verdict)"
+  mu "$MG" -- ./test.sh >/dev/null
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 0)" "88-mutation: list present, anchors match, fresh verdict → ✅ (negative)"
+  printf 'exports.round = (x) => Math.round(x); // edited\nexports.floor1 = (n) => Math.max(1, n);\n' > "$MG/src/price.js"
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 2)" "88-mutation: a mutated file changed since the verdict → WARN"
+  git -C "$MG" checkout -q src/price.js
+  printf '{"file":"src/price.js","from":"vanished","to":"x","hurts":"stale"}\n' >> "$MG/m.jsonl"
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 1)" "88-mutation: a stale anchor → FAIL (cannot be planted)"
+  rm -f "$MG/m.jsonl"
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 1)" "88-mutation: configured list missing → FAIL"
+  rm -rf "$MG"
+  MN="$(mktemp -d)"; ( cd "$MN" && git init -q && git commit -qm b --allow-empty ) >/dev/null 2>&1
+  ok_t "$(mu_ok "$(mu_guard "$MN")" 0)" "88-mutation: not configured → one line, exit 0 (existing projects are not broken)"
+  ok_t "$(grep -q 'not configured' "$MN/g.out" && echo 1 || echo 0)" "88-mutation: the silence says WHY it is silent"
+  rm -rf "$MN"
+
+  # rule-bearing file changed: warn with no new mutation, pass with one
+  MR="$(mu_repo)"; ( cd "$MR" && mu_run() { :; }; node "$MUTL" --list m.jsonl -- ./test.sh >/dev/null 2>&1 )
+  ( cd "$MR" && git checkout -q -b feature && mkdir -p src && printf 'exports.tax = (x) => x * 2;\n' > src/pricing.js && git add -A && git commit -qm "rule" ) >/dev/null 2>&1
+  ok_t "$(mu_ok "$(mu_guard "$MR" main)" 2)" "88-mutation: pricing file changed, no new mutation → WARN (positive)"
+  grep -q 'no new mutation' "$MR/g.out" && ok_t 1 "88-mutation: the warning names the cause" || ok_t 0 "88-mutation: the warning names the cause"
+  ( cd "$MR" && printf '{"file":"src/pricing.js","from":"x * 2","to":"x * 3","hurts":"tax doubled instead of tripled"}\n' >> m.jsonl && git add -A && git commit -qm "mutation" && node "$MUTL" --list m.jsonl -- ./test.sh >/dev/null 2>&1 )
+  ok_t "$(mu_ok "$(mu_guard "$MR" main)" 2)" "88-mutation: a new mutation the suite never sees → the verdict records a SURVIVOR → WARN, not ✅"
+  rm -rf "$MR" "$MD" "$MU" "$MA" "$ME" "$MB" "$MJ"
+else
+  echo "SKIP  mutate --list (no node)"
+fi
+
 echo "══ cfg: a configured FALSE is a value, not an absence ═══════"
 CFD="$(mktemp -d)"; printf '{"pushGuard": false, "on": true, "n": 0, "s": "", "nested": {"off": false}}\n' > "$CFD/proofgate.json"
 cfg_in() { ( cd "$CFD" && PROOFGATE_CFG=proofgate.json bash -c ". '$LIB'; cfg '$1'" ); }

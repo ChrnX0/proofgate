@@ -21,6 +21,11 @@
  * Usage:
  *   node mutate.mjs <source-file> -- <test command...> < mutations.jsonl
  *
+ * A project that keeps a curated list of defects (many files, `hurts` sentences, slices, a
+ * verdict the gate reads) uses the other mode — see mutate-list.mjs:
+ *   node mutate.mjs --list mutations.jsonl [--slice 1/3] -- <suite command...>
+ *   node mutate.mjs --list mutations.jsonl --check | --status
+ *
  * Examples:
  *   node mutate.mjs src/pricing.ts -- npx vitest run src/pricing.test.ts < m.jsonl
  *   node mutate.mjs app/rules.py -- pytest tests/test_rules.py < m.jsonl
@@ -39,6 +44,10 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+// `--list <file>` is the project-curated mode (many files, three outcomes, slices, a verdict the
+// gate can read). It lives in its own module and always exits, so nothing below runs after it.
+if (process.argv.includes("--list")) await import("./mutate-list.mjs");
 
 const argv = process.argv.slice(2);
 const sep = argv.indexOf("--");
