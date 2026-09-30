@@ -9,7 +9,9 @@
 #   bash install.sh --uninstall                         # remove what we added
 #
 # What it does (and nothing else):
-#   1. copies verify.sh + lib.sh + impact.sh + claim.sh + hypothesis.sh + memory.sh + experiment.sh + mode.sh + skeptic.sh + proof.sh + guards.d/ + templates/ into .proofgate/
+#   1. copies every script + guards.d/ + templates/ into .proofgate/, KEEPING anything this
+#      project added or changed there (it is lessons — see upstream.sh), and writes
+#      upstream.lock. --force-upstream overwrites even those.
 #   2. --hook: wires .git/hooks/pre-push to gate before every push (existing hook
 #      is preserved as pre-push.local and still runs — we never clobber it)
 #   3. --ci: writes .github/workflows/proofgate.yml (warn-only to start)
@@ -17,9 +19,9 @@
 #      then refuses "done" without a fresh passing verdict — opt-in, off by default)
 set -euo pipefail
 
-HOOK=0 CI=0 STOP=0 UNINSTALL=0
+HOOK=0 CI=0 STOP=0 UNINSTALL=0 FORCE_UPSTREAM=0
 for a in "$@"; do case "$a" in
-  --hook) HOOK=1 ;; --ci) CI=1 ;; --stop-hook) STOP=1 ;; --uninstall) UNINSTALL=1 ;;
+  --force-upstream) FORCE_UPSTREAM=1 ;; --hook) HOOK=1 ;; --ci) CI=1 ;; --stop-hook) STOP=1 ;; --uninstall) UNINSTALL=1 ;;
 esac; done
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "run me inside a git repo"; exit 1; }
@@ -51,41 +53,58 @@ if [ "$UNINSTALL" = 1 ]; then
 fi
 
 mkdir -p "$DEST"
-vendor() { # copy from local clone if present, else from the release tarball
-  if [ -f "$SRC_DIR/skills/proofgate/scripts/verify.sh" ]; then
-    cp "$SRC_DIR/skills/proofgate/scripts/verify.sh" "$DEST/verify.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/lib.sh" "$DEST/lib.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/impact.sh" "$DEST/impact.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/claim.sh" "$DEST/claim.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/hypothesis.sh" "$DEST/hypothesis.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/memory.sh" "$DEST/memory.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/experiment.sh" "$DEST/experiment.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/mode.sh" "$DEST/mode.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/skeptic.sh" "$DEST/skeptic.sh"
-    cp "$SRC_DIR/skills/proofgate/scripts/proof.sh" "$DEST/proof.sh"
-    rm -rf "$DEST/guards.d" && cp -r "$SRC_DIR/skills/proofgate/scripts/guards.d" "$DEST/guards.d"
-    rm -rf "$DEST/templates" && cp -r "$SRC_DIR/templates" "$DEST/templates" 2>/dev/null || true
-  else
-    local TMP; TMP="$(mktemp -d)"
-    curl -fsSL https://github.com/ChrnX0/proofgate/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/verify.sh "$DEST/verify.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/lib.sh "$DEST/lib.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/impact.sh "$DEST/impact.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/claim.sh "$DEST/claim.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/hypothesis.sh "$DEST/hypothesis.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/memory.sh "$DEST/memory.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/experiment.sh "$DEST/experiment.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/mode.sh "$DEST/mode.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/skeptic.sh "$DEST/skeptic.sh"
-    cp "$TMP"/proofgate-main/skills/proofgate/scripts/proof.sh "$DEST/proof.sh"
-    rm -rf "$DEST/guards.d" && cp -r "$TMP"/proofgate-main/skills/proofgate/scripts/guards.d "$DEST/guards.d"
-    rm -rf "$DEST/templates" && cp -r "$TMP"/proofgate-main/templates "$DEST/templates" 2>/dev/null || true
-    rm -rf "$TMP"
-  fi
-}
-vendor
-chmod +x "$DEST/verify.sh" "$DEST/impact.sh" "$DEST/claim.sh" "$DEST/hypothesis.sh" "$DEST/memory.sh" "$DEST/experiment.sh" "$DEST/mode.sh" "$DEST/skeptic.sh" "$DEST/proof.sh" "$DEST"/guards.d/*.sh 2>/dev/null || true
-set -- "$DEST"/guards.d/*.sh; echo "✅ vendored: .proofgate/verify.sh + lib.sh (+ $# guards)"
+
+# Where the files come from: this clone, or the release tarball.
+TMP=""
+if [ -f "$SRC_DIR/skills/proofgate/scripts/verify.sh" ]; then
+  SRC="$SRC_DIR"
+else
+  TMP="$(mktemp -d)"
+  curl -fsSL https://github.com/ChrnX0/proofgate/archive/refs/heads/main.tar.gz | tar -xz -C "$TMP"
+  SRC="$TMP/proofgate-main"
+fi
+S="$SRC/skills/proofgate/scripts"
+VER="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$SRC/.claude-plugin/plugin.json" 2>/dev/null | head -1)"
+
+# What did this copy learn that upstream does not have? An upgrade used to `rm -rf guards.d`,
+# so a guard that existed only in the project died on the next install. Ask upstream.sh
+# (the new one, from $S) what differs, save it, and put it back after the copy. Anything
+# that differs and cannot be proven "untouched" is kept — overwriting is the irreversible side.
+KEPT="$(mktemp -d)"; KEPT_LIST=""
+if [ "$FORCE_UPSTREAM" = 0 ] && [ -d "$DEST" ]; then
+  KEPT_LIST="$(PG_LOCAL_DIR="$DEST" bash "$S/upstream.sh" keep-list "$S" 2>/dev/null || true)"
+  while IFS="$(printf '\t')" read -r rel counterpart; do
+    [ -n "$rel" ] || continue
+    mkdir -p "$KEPT/$(dirname "$rel")" && cp -p "$DEST/$rel" "$KEPT/$rel"
+  done <<KEEP
+$KEPT_LIST
+KEEP
+fi
+
+# Everything the gate is made of: every script, every guard — not a hand-kept list of names
+# (a new script that nobody added to the list was silently never installed).
+for f in "$S"/*.sh "$S"/*.mjs; do [ -f "$f" ] && cp "$f" "$DEST/$(basename "$f")"; done
+rm -rf "${DEST:?}/guards.d" && cp -r "$S/guards.d" "$DEST/guards.d"
+rm -rf "${DEST:?}/templates" && { cp -r "$SRC/templates" "$DEST/templates" 2>/dev/null || true; }
+
+# Put back what was kept. A kept file that has an upstream counterpart under another number
+# replaces it, so one guard never runs twice.
+while IFS="$(printf '\t')" read -r rel counterpart; do
+  [ -n "$rel" ] || continue
+  if [ "$counterpart" != "-" ] && [ "$counterpart" != "$rel" ]; then rm -f "${DEST:?}/${counterpart:?}"; fi
+  mkdir -p "$DEST/$(dirname "$rel")" && cp -p "$KEPT/$rel" "$DEST/$rel"
+  if [ "$counterpart" = "-" ]; then echo "▫️  kept $rel — it exists only in this project (upstream has never seen it)"
+  else echo "▫️  kept YOUR $rel — it differs from upstream's; see: bash .proofgate/upstream.sh diff <proofgate clone>"; fi
+done <<KEEP
+$KEPT_LIST
+KEEP
+
+# The lock records what upstream shipped, NOT what is on disk: a kept file then still reads
+# as "learned here" on the next gate run, until it has gone back.
+PG_LOCAL_DIR="$DEST" bash "$S/upstream.sh" lock "$S" "${VER:-unknown}"
+rm -rf "${KEPT:?}"; if [ -n "$TMP" ]; then rm -rf "${TMP:?}"; fi
+chmod +x "$DEST"/*.sh "$DEST"/guards.d/*.sh 2>/dev/null || true
+set -- "$DEST"/guards.d/*.sh; echo "✅ vendored: .proofgate/ ${VER:+(proofgate $VER) }— verify.sh + lib.sh + $# guards"
 
 if [ "$HOOK" = 1 ]; then
   mkdir -p "$GD/hooks"

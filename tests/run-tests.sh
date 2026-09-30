@@ -1266,6 +1266,67 @@ ac=0; ( cd "$AU" && printf 'not json' | bash "$ROOT/hooks/audit-hook.sh" ) >/dev
 ok_t "$([ "$ac" = 0 ] && echo 1 || echo 0)" "audit: malformed stdin → fail-open"
 rm -rf "$AU"
 
+echo "══ upstream: what a project learns goes back to the gate ═════"
+# The rule "a mistake becomes a guard upstream" was prose in a project's CLAUDE.md and never
+# ran. These pin the three mechanical causes: no trigger (guard 91), a lesson that stays put
+# (diff/send) and an installer that erased the local guard on upgrade (keep-list).
+UP_GUARD="$GUARDS/91-upstream-drift.sh"
+up_project() { # a consumer repo with the gate vendored by the REAL installer
+  local d; d="$(mktemp -d)"
+  ( cd "$d" && git init -q -b main && git config user.email t@t && git config user.name t \
+    && git commit -qm base --allow-empty && bash "$ROOT/install.sh" ) >/dev/null 2>&1
+  echo "$d"
+}
+up_guard() { ( cd "$1" && PROOFGATE_BASE=HEAD PROOFGATE_CFG=proofgate.json bash .proofgate/guards.d/91-upstream-drift.sh 2>&1 ); }
+up_code() { local c=0; up_guard "$1" >/dev/null || c=$?; echo "$c"; }
+
+UPD="$(up_project)"
+ok_t "$([ -f "$UPD/.proofgate/upstream.lock" ] && [ -f "$UPD/.proofgate/mutate.mjs" ] && [ -f "$UPD/.proofgate/upstream.sh" ] && echo 1 || echo 0)" "upstream: installer vendors EVERY script (upstream.sh, mutate.mjs) and writes the lock"
+ok_t "$([ "$(up_code "$UPD")" = 0 ] && echo 1 || echo 0)" "upstream-drift: a fresh install is clean (negative)"
+
+printf '#!/usr/bin/env bash\n# Guard: a lesson learned here.\necho "✅ mine: ok"\n' > "$UPD/.proofgate/guards.d/50-mine.sh"
+UOUT="$(up_guard "$UPD")"   # captured, not piped into grep -q: under pipefail an early-closing grep reads as SIGPIPE
+ok_t "$([ "$(up_code "$UPD")" = 2 ] && printf '%s' "$UOUT" | grep -q '50-mine.sh' && echo 1 || echo 0)" "upstream-drift: a guard added only here → WARN, named (positive)"
+
+( cd "$UPD" && printf '{"upstream":{"keepLocal":["50-mine.sh"]}}\n' > proofgate.json )
+ok_t "$([ "$(up_code "$UPD")" = 0 ] && echo 1 || echo 0)" "upstream-drift: declared project-specific (keepLocal) → silent (negative)"
+rm -f "$UPD/proofgate.json"
+
+# installer: the local guard and a locally-edited upstream guard both survive an upgrade
+echo "# learned here" >> "$UPD/.proofgate/guards.d/70-debug-leftovers.sh"
+( cd "$UPD" && bash "$ROOT/install.sh" ) >/dev/null 2>&1
+ok_t "$([ -f "$UPD/.proofgate/guards.d/50-mine.sh" ] && echo 1 || echo 0)" "installer: a guard that exists only in the project survives the upgrade"
+ok_t "$(grep -q 'learned here' "$UPD/.proofgate/guards.d/70-debug-leftovers.sh" && echo 1 || echo 0)" "installer: an upstream guard the project CHANGED is kept, not overwritten"
+ok_t "$([ "$(ls "$UPD"/.proofgate/guards.d/*.sh | sed -E 's#.*/[0-9]+-##' | sort | uniq -d | wc -l | tr -d ' ')" = 0 ] && echo 1 || echo 0)" "installer: no guard ends up twice under two numbers"
+
+# untouched here + moved upstream → overwritten (the lock says nobody here touched it)
+G="$UPD/.proofgate/guards.d/85-float-money.sh"; echo "# old copy" >> "$G"
+NEWH="$(git hash-object "$G")"; awk -v h="$NEWH" '/guards\.d\/85-float-money\.sh$/ { print h "  guards.d/85-float-money.sh"; next } { print }' "$UPD/.proofgate/upstream.lock" > "$UPD/lock.tmp" && mv "$UPD/lock.tmp" "$UPD/.proofgate/upstream.lock"
+( cd "$UPD" && bash "$ROOT/install.sh" ) >/dev/null 2>&1
+ok_t "$(grep -q 'old copy' "$G" && echo 0 || echo 1)" "installer: a file untouched here (== lock) is brought up to date"
+( cd "$UPD" && bash "$ROOT/install.sh" --force-upstream ) >/dev/null 2>&1
+ok_t "$([ -f "$UPD/.proofgate/guards.d/50-mine.sh" ] && echo 0 || echo 1)" "installer: --force-upstream overwrites what the project added (explicit only)"
+
+# a copy installed BEFORE the lock existed: the guard cannot know what was learned → silent
+rm -f "$UPD/.proofgate/upstream.lock"
+UOUT="$(up_guard "$UPD")"
+ok_t "$([ "$(up_code "$UPD")" = 0 ] && printf '%s' "$UOUT" | grep -q 'no upstream.lock' && echo 1 || echo 0)" "upstream-drift: no lock → says so and stays silent (legacy copy, negative)"
+
+# diff / send against a clone, on that legacy copy: everything differing is listed, none invented
+printf '#!/usr/bin/env bash\n# Guard: a lesson learned here.\n# The scar: it cost an afternoon.\necho "✅ mine: ok"\n' > "$UPD/.proofgate/guards.d/50-mine.sh"
+UPC="$(mktemp -d)"; cp -r "$ROOT/skills" "$ROOT/templates" "$UPC/" 2>/dev/null
+dcode=0; ( cd "$UPD" && bash .proofgate/upstream.sh diff "$UPC" ) > "$UPD/diff.out" 2>&1 || dcode=$?
+ok_t "$([ "$dcode" = 1 ] && grep -q 'local-only.*50-mine.sh' "$UPD/diff.out" && echo 1 || echo 0)" "upstream diff: a local-only guard is listed and the exit says there is something to send"
+ok_t "$(grep -E '^  local-only' "$UPD/diff.out" | grep -vq -E '50-mine' && echo 0 || echo 1)" "upstream diff: a file identical to upstream is NOT reported as learned (negative)"
+( cd "$UPD" && bash .proofgate/upstream.sh send "$UPC" ) > "$UPD/send.out" 2>&1
+SENT="$(ls "$UPC"/skills/proofgate/scripts/guards.d | grep -- '-mine.sh' | head -1)"
+ok_t "$([ -n "$SENT" ] && [ "$SENT" = "51-mine.sh" ] && grep -q 'it cost an afternoon' "$UPD/send.out" && echo 1 || echo 0)" "upstream send: staged under a FREE number, with the guard's scar as the PR body seed"
+dc=0; ( cd "$UPD" && bash .proofgate/upstream.sh diff "$ROOT" >/dev/null 2>&1 ) || dc=$?
+rm -f "$UPD/.proofgate/guards.d/50-mine.sh" "$UPD/.proofgate/guards.d/50-mine.sh"
+dc2=0; ( cd "$UPD" && bash .proofgate/upstream.sh diff "$ROOT" >/dev/null 2>&1 ) || dc2=$?
+ok_t "$([ "$dc" = 1 ] && [ "$dc2" = 0 ] && echo 1 || echo 0)" "upstream diff: exit 1 while something is unsent, 0 once there is nothing (and only then)"
+rm -rf "$UPD" "$UPC"
+
 echo "══ portability + docs (the promises we make about ourselves) ═"
 # CI runs macOS: bash 3.2 and BSD userland. Every one of these constructs works on
 # the dev box and fails there — which is the worst possible failure, because the
