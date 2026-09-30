@@ -17,6 +17,10 @@ VERIFY="$ROOT/skills/proofgate/scripts/verify.sh"
 LIB="$ROOT/skills/proofgate/scripts/lib.sh"
 export PROOFGATE_LIB="$LIB"
 PASS=0 FAIL=0
+# Per-run scratch files, not fixed /tmp names: two runs at once (the mutation runner slices a
+# slow suite, CI matrices share runners) used to overwrite each other's output.
+PG_CV="$(mktemp)"; PG_TOOL="$(mktemp)"
+trap 'rm -f "$PG_CV" "$PG_TOOL"' EXIT
 
 # A JSON validator that degrades gracefully (jq → python3 → node → SKIP).
 json_ok() { # json_ok <file>
@@ -60,7 +64,7 @@ caso_verify() { # caso_verify <name> <expected-exit> <setup-fn> <assert-fn> [ver
     git add -A && git commit -qm change
   ) >/dev/null 2>&1
   local code=0
-  ( cd "$tmp" && bash "$VERIFY" "$@" ) >/tmp/pg-cv.out 2>&1 || code=$?
+  ( cd "$tmp" && bash "$VERIFY" "$@" ) >"$PG_CV" 2>&1 || code=$?
   local ok=1
   [ "$code" = "$esperado" ] || ok=0
   if [ -n "$assert" ]; then ( cd "$tmp" && "$assert" ) || ok=0; fi
@@ -111,7 +115,7 @@ caso_tool() { # caso_tool <name> <expected-exit> <setup-fn> <assert-fn> -- <scri
   local code=0
   # </dev/null matters: a tool that reads stdin by accident must fail the test,
   # not hang the suite. (pg_sha1 with a missing path did exactly that once.)
-  ( cd "$tmp" && PROOFGATE_LIB="$LIB" bash "$script" "$@" </dev/null ) >/tmp/pg-tool.out 2>&1 || code=$?
+  ( cd "$tmp" && PROOFGATE_LIB="$LIB" bash "$script" "$@" </dev/null ) >"$PG_TOOL" 2>&1 || code=$?
   local ok=1
   [ "$code" = "$esperado" ] || ok=0
   if [ -n "$assert" ]; then ( cd "$tmp" && "$assert" ) || ok=0; fi
@@ -298,8 +302,8 @@ setup_projguard() {
   printf '#!/usr/bin/env bash\necho "project guard ran"\nexit 0\n' > mine/90-project-only.sh
   echo 'x' > a.ts
 }
-a_projguard_ran()  { grep -q "project guard ran" /tmp/pg-cv.out; }
-a_names_both_dirs() { grep -q "guards.d" /tmp/pg-cv.out && grep -q "mine" /tmp/pg-cv.out; }
+a_projguard_ran()  { grep -q "project guard ran" "$PG_CV"; }
+a_names_both_dirs() { grep -q "guards.d" "$PG_CV" && grep -q "mine" "$PG_CV"; }
 
 caso_verify "engine: green repo → exit 0 + valid verdict" 0 setup_clean a_verdict_valid
 caso_verify "engine: verdict sha == HEAD"                 0 setup_clean a_sha_matches
@@ -321,8 +325,8 @@ caso_verify "engine: --dry-run writes NO verdict"         0 setup_clean a_no_ver
 # inspect a docs-only diff and every one reports "nothing touched", which reads as
 # approval. They cannot detect it from the inside, so the engine warns.
 setup_docsonly()   { echo "# notes" > NOTES.md; }
-a_sourceless()     { grep -q "sourceless-diff" /tmp/pg-cv.out; }
-a_not_sourceless() { ! grep -q "sourceless-diff" /tmp/pg-cv.out; }
+a_sourceless()     { grep -q "sourceless-diff" "$PG_CV"; }
+a_not_sourceless() { ! grep -q "sourceless-diff" "$PG_CV"; }
 caso_verify "engine: docs-only diff → warns the guards were blind" 0 setup_docsonly a_sourceless
 caso_verify "engine: diff with source → no blind-gate warning"     0 setup_clean a_not_sourceless
 
@@ -338,9 +342,9 @@ caso_verify "engine: verdict is schemaVersion 2"                  0 setup_clean 
 caso_verify "engine: verdict has exactly one sha + one pass, one line" 0 setup_clean a_one_sha
 caso_verify "engine: verdict carries the impact risk class"       0 setup_clean a_has_impact
 caso_verify "engine: verdict carries required_level"              0 setup_clean a_required
-a_impact_line() { grep -q "impact: L" /tmp/pg-cv.out; }
+a_impact_line() { grep -q "impact: L" "$PG_CV"; }
 caso_verify "engine: prints the blast-radius line"                0 setup_clean a_impact_line
-a_no_impact_line() { ! grep -q "impact: L" /tmp/pg-cv.out; }
+a_no_impact_line() { ! grep -q "impact: L" "$PG_CV"; }
 caso_verify "engine: --no-impact skips it"                        0 setup_clean a_no_impact_line --no-impact
 
 echo "══ impact: the blast radius ════════════════════════════════"
@@ -520,7 +524,7 @@ caso_verify "engine: clean ledger → chain_ok"                          0 setup
 setup_forged() { mkdir -p src; echo 'export const x=1;' > src/a.ts
                  mkdir -p .git
                  printf '{"id":"c-forged","sha":"%s","kind":"central","level_recorded":"E4","prev":"deadbeef"}\n' "$(git rev-parse HEAD 2>/dev/null || echo x)" > .git/proofgate-claims.jsonl; }
-a_chain_fail() { grep -q "ledger-chain" /tmp/pg-cv.out; }
+a_chain_fail() { grep -q "ledger-chain" "$PG_CV"; }
 caso_verify "engine: forged ledger row → ledger-chain FAIL" 1 setup_forged a_chain_fail
 
 echo "══ hooks ═══════════════════════════════════════════════════"
