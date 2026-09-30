@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.4.0 — 2026-09-30
+
+A lesson that stays in one project protects that project only — and a mutation list is only worth having if the gate can tell when it has gone stale.
+
+### Added
+
+- **The way back: `upstream.sh` + guard `91-upstream-drift`.** The rule "a mistake a script
+  would catch becomes a guard in this repo, with a positive and a negative test, and goes up by
+  PR" lived as prose in a project's CLAUDE.md. Prose is level 2 of this skill's own ladder, and
+  it protected nothing: measured 2026-09-30, the heaviest user held six guards, a `cfg` fix, a
+  `pg_match` that cut the gate from ~8 min to 22 s and two false-positive fixes — all committed
+  and tested there, none sent here (last commit from real use on this side: 2026-09-14).
+  Three mechanical causes, each closed by something that runs:
+  - *no trigger* → `91-upstream-drift` warns on every gate run while the vendored copy holds a
+    file upstream does not. Silent, with a line saying why, for a copy without a lock.
+  - *the lesson stays put* → `upstream.sh diff <clone>` lists local-only / diverged / behind
+    (three-way, through the lock: it says which way each file moved); `upstream.sh send <clone>`
+    stages local guards under a free number with their scar as the PR body's first paragraph.
+  - *the installer erased it* → `install.sh` did `rm -rf guards.d`, so a guard that existed only
+    in the project died on the next upgrade, and it copied a hand-kept list of ten scripts, so
+    `mutate.mjs` was never installed. It now copies every script, **keeps** what the project
+    added or changed, never leaves one guard under two numbers, writes `upstream.lock`, and
+    takes `--force-upstream` for the explicit overwrite.
+  Proved on the real case: the NORVA vendored copy (25 guards) through `diff` = 6 local-only +
+  12 diverged, matching an independent `cmp` count; `install.sh` over it kept all 18 byte-identical.
+- **`mutate.mjs --list` and guard `88-mutation`** — the curated mutation list, brought over from
+  the project that ran it longest (310 entries, a ~55 s suite). `{file, from, to, hurts}` per
+  line; runs in a COPY of the tree; the suite has three outcomes (*passed / failed / not
+  measured*, and not measured is never counted as caught); the copy proves it can run the suite
+  (green baseline + a harmless sentinel) before anything is judged; a stale or ambiguous anchor is
+  unmeasured and fails; `equivalent` needs a written reason and errors if the suite catches it;
+  `--slice i/n` for suites that make a full run exceed a background task's ceiling; the
+  verdict is bound to the list and to the hash of each mutated file, not to HEAD. The guard is
+  **opt-in by `mutation.list`** and reads list + verdict in milliseconds — the anchor check (❌),
+  verdict age, verdict about other code, and a rule-bearing file changed with no new mutation.
+  Without the config it prints one line and exits 0.
+
+### Fixed
+
+- **`cfg` swallowed a configured `false`** (the first lesson to come back through the new path).
+  With jq, `$path // empty` treats false as absent, so `"pushGuard": false` — the emergency
+  switch `push-guard.sh` documents — printed nothing and the guard blocked forever, with a
+  message telling you to set the very key that did not work. The node/python walkers already
+  kept false; only the jq path lost it. Found and fixed by the downstream project on 2026-09-05.
+
+### Changed
+
+- Guard count 25 → 27; test suite 254 → 303 cases.
+
 ## 3.3.0 — 2026-09-14
 
 A signature covers bytes, and a JSON column may rewrite them.

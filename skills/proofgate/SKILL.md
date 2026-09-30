@@ -88,7 +88,7 @@ implies is the failure this whole skill exists to stop.
 
 Auto-detects your stack (pnpm/npm/yarn/bun, Cargo, Go, Python, Gradle/Maven, .NET,
 Ruby, PHP, Elixir, Deno) and runs what the machine checks better than judgment:
-typecheck / lint / tests (/ build) actually green; working tree committed; **26
+typecheck / lint / tests (/ build) actually green; working tree committed; **27
 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types,
 money-as-float, hand-built SQL, machine paths, dependency-lockfile drift,
 un-migrated schema constraints, …).
@@ -239,6 +239,15 @@ mutation as the *bug a hurried person would actually introduce* — delete the f
 
 A surviving mutation is not a style note. It is a rule your suite claims to cover and does not.
 
+Past a handful, keep the defects as **a list the project owns** — `mutate.mjs --list mutations.jsonl`
+(`{file, from, to, hurts}` per line; `hurts` is one sentence about the damage). It runs in a copy of
+the tree, reads the suite as **three** outcomes (passed · failed · *not measured* — never counted as
+caught), refuses a baseline that is not green, treats a stale or ambiguous anchor as unmeasured, takes
+`--slice i/n` when the suite is slow, and records a verdict bound to the list and to the files it
+mutates. Opt in with `mutation.list` in `proofgate.json`; the `88-mutation` guard then reads the list
+and the verdict on every gate run (milliseconds — never the hours). The rule that grows the list:
+**every defect you fix gains a mutation.**
+
 ### Don't rationalize — the excuse-buster table
 
 | The excuse you're about to make | What it actually requires |
@@ -343,6 +352,13 @@ Close it with a guard (add `proofgate-lesson: <id>` to the guard file), a regres
 test, or — when the honest answer is "documented only" — `memory.sh add --resolves <id>`.
 A comment in a README does not count: that is level 2 wearing level 4's clothes, and a
 test pins the distinction.
+
+**A lesson that stays in one project protects that project only.** A guard you wrote in
+`.proofgate/guards.d/` is also a lesson for every other project, and "I will send it up later"
+is level 2 again — so the gate says it: `91-upstream-drift` warns on every run while your copy
+holds something the gate does not, `upstream.sh diff <clone>` lists it and `upstream.sh send
+<clone>` stages it (with the guard's scar as the PR body). `install.sh` keeps what the project
+learned instead of overwriting it. A guard is a draft until it has a positive and a negative test.
 
 ### Memory that can go stale, and says so
 
