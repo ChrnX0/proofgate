@@ -1379,7 +1379,6 @@ echo "══ upstream: what a project learns goes back to the gate ════�
 # The rule "a mistake becomes a guard upstream" was prose in a project's CLAUDE.md and never
 # ran. These pin the three mechanical causes: no trigger (guard 91), a lesson that stays put
 # (diff/send) and an installer that erased the local guard on upgrade (keep-list).
-UP_GUARD="$GUARDS/91-upstream-drift.sh"
 up_project() { # a consumer repo with the gate vendored by the REAL installer
   local d; d="$(mktemp -d)"
   ( cd "$d" && git init -q -b main && git config user.email t@t && git config user.name t \
@@ -1428,7 +1427,7 @@ dcode=0; ( cd "$UPD" && bash .proofgate/upstream.sh diff "$UPC" ) > "$UPD/diff.o
 ok_t "$([ "$dcode" = 1 ] && grep -q 'local-only.*50-mine.sh' "$UPD/diff.out" && echo 1 || echo 0)" "upstream diff: a local-only guard is listed and the exit says there is something to send"
 ok_t "$(grep -E '^  local-only' "$UPD/diff.out" | grep -vq -E '50-mine' && echo 0 || echo 1)" "upstream diff: a file identical to upstream is NOT reported as learned (negative)"
 ( cd "$UPD" && bash .proofgate/upstream.sh send "$UPC" ) > "$UPD/send.out" 2>&1
-SENT="$(ls "$UPC"/skills/proofgate/scripts/guards.d | grep -- '-mine.sh' | head -1)"
+SENT=""; for f in "$UPC"/skills/proofgate/scripts/guards.d/*-mine.sh; do [ -f "$f" ] && { SENT="$(basename "$f")"; break; }; done
 ok_t "$([ -n "$SENT" ] && [ "$SENT" = "51-mine.sh" ] && grep -q 'it cost an afternoon' "$UPD/send.out" && echo 1 || echo 0)" "upstream send: staged under a FREE number, with the guard's scar as the PR body seed"
 dc=0; ( cd "$UPD" && bash .proofgate/upstream.sh diff "$ROOT" >/dev/null 2>&1 ) || dc=$?
 rm -f "$UPD/.proofgate/guards.d/50-mine.sh" "$UPD/.proofgate/guards.d/50-mine.sh"
