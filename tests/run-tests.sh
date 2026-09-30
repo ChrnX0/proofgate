@@ -1266,6 +1266,15 @@ ac=0; ( cd "$AU" && printf 'not json' | bash "$ROOT/hooks/audit-hook.sh" ) >/dev
 ok_t "$([ "$ac" = 0 ] && echo 1 || echo 0)" "audit: malformed stdin → fail-open"
 rm -rf "$AU"
 
+echo "══ cfg: a configured FALSE is a value, not an absence ═══════"
+CFD="$(mktemp -d)"; printf '{"pushGuard": false, "on": true, "n": 0, "s": "", "nested": {"off": false}}\n' > "$CFD/proofgate.json"
+cfg_in() { ( cd "$CFD" && PROOFGATE_CFG=proofgate.json bash -c ". '$LIB'; cfg '$1'" ); }
+ok_t "$([ "$(cfg_in .pushGuard)" = "false" ] && echo 1 || echo 0)" "cfg: \"pushGuard\": false reads back as false (the documented emergency switch)"
+ok_t "$([ "$(cfg_in .nested.off)" = "false" ] && echo 1 || echo 0)" "cfg: a nested false reads back as false"
+ok_t "$([ "$(cfg_in .on)" = "true" ] && [ "$(cfg_in .n)" = "0" ] && echo 1 || echo 0)" "cfg: true and 0 still read back (negative)"
+ok_t "$([ -z "$(cfg_in .missing)" ] && [ -z "$(cfg_in .nested.nope)" ] && echo 1 || echo 0)" "cfg: a key that is absent still prints nothing (negative)"
+rm -rf "$CFD"
+
 echo "══ upstream: what a project learns goes back to the gate ═════"
 # The rule "a mistake becomes a guard upstream" was prose in a project's CLAUDE.md and never
 # ran. These pin the three mechanical causes: no trigger (guard 91), a lesson that stays put
