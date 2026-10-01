@@ -300,6 +300,44 @@ caso "schema-constraint: check in if-not-exists → WARN"  2 95-schema-constrain
 caso "schema-constraint: shipped with ALTER → pass"      0 95-schema-constraint-no-migration.sh plant_ddlok
 caso "schema-constraint: brand-new table → pass"         0 95-schema-constraint-no-migration.sh plant_ddlnew
 
+# ── 92-superuser-verification ─────────────────────────────────────────────────
+# Os setups plantam a POLÍTICA junto, e isso não é enfeite: o guard se cala em
+# repositório sem row level security, porque lá não existe nada para ignorar. Sem a
+# política, o caso positivo passava verde e eu teria concluído que o guard funciona.
+# O pecado: o caminho de VERIFICAÇÃO conecta no Postgres como superusuário. Superusuário
+# ignora row level security, então a política nunca é avaliada — a suíte prova que as
+# colunas batem e absolutamente nada sobre o servidor aceitar a escrita. Este guard
+# nasceu de uma barra verde inteira que atravessou com uma premissa errada por causa
+# disso.
+plant_super()   { mkdir -p scripts supabase/migrations
+                  printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                  printf 'psql -U postgres -d "$DB" -f queue.sql\n' > scripts/verify-db.sh; }
+# O comentário que AVISA contra o superusuário não é a ofensa — e acusar o comentário
+# ensina a parar de escrever comentário.
+plant_supercmt(){ mkdir -p scripts supabase/migrations
+                  printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                  printf '# nunca rode isto com -U postgres: RLS nao seria avaliada\npsql "$DB" -f queue.sql\n' > scripts/verify-db.sh; }
+# Código de produção conectando como quiser não é assunto deste guard: ele cobra o
+# caminho que IMITA o cliente.
+plant_superprod(){ mkdir -p src supabase/migrations
+                   printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                   printf 'const url = "postgres://postgres@localhost/app";\n' > src/db.ts; }
+caso "superuser: verification path as superuser → WARN"  2 92-superuser-verification.sh plant_super
+caso "superuser: the warning comment is not the sin"     0 92-superuser-verification.sh plant_supercmt
+caso "superuser: product code is not this guard s job"   0 92-superuser-verification.sh plant_superprod
+
+# ── 99-dead-allow ─────────────────────────────────────────────────────────────
+# O pecado é da própria ferramenta: o marcador `proofgate-allow` é casado contra a
+# LINHA ADICIONADA. Escrito no comentário ACIMA do código que ele quer desculpar, ele
+# não suprime nada — e lê exatamente como um achado tratado. É pior que aviso sem
+# justificativa: é uma placa de "resolvido" ligada em nada.
+plant_deadallow() { printf '// proofgate-allow\nconst rx = /token/;\n' > a.ts; }
+# Na própria linha, ele funciona — e passar aqui é o que separa o guard de um que
+# proíbe o marcador.
+plant_liveallow() { printf 'const rx = /token/; // proofgate-allow\n' > a.ts; }
+caso "dead-allow: marker alone on a comment line → WARN" 2 99-dead-allow.sh plant_deadallow
+caso "dead-allow: marker on the offending line → pass"   0 99-dead-allow.sh plant_liveallow
+
 # ── 96-version-bump-no-release ────────────────────────────────────────────────
 # The sin: a manifest version goes up and nothing in the delivery cuts a release, so
 # "merged" gets reported as "shipped" while the shop window still shows the old number.
