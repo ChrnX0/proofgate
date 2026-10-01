@@ -11,6 +11,13 @@
   a phantom. Warns on added lines that select victims by pattern (`pkill`, `killall`,
   `kill $(pgrep …)`, `taskkill /IM`); prose in `.md` is exempt. Guard count 31 → 32.
 
+- **Guard `47-unquoted-globstar`, sent back from a project that vendors the gate.** The scar:
+  `"test": "tsx --test src/**/*.test.ts"`. The shell expands that before the runner sees it, and
+  without `globstar` it reads `**` as a single directory level — a test file one level shallower
+  or three deeper is never executed, and the suite reports success for a file it never opened. It
+  hid for as long as nobody counted. Warns on an added package.json script value carrying `**`
+  with no shell quote around it. Guard count 32 → 33.
+
 ## 3.4.0 — 2026-09-30
 
 A lesson that stays in one project protects that project only — and a mutation list is only worth having if the gate can tell when it has gone stale.

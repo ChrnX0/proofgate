@@ -1673,6 +1673,20 @@ caso "broad-process-kill: bare kill \$(pgrep ...) → WARN"     2 45-broad-proce
 caso "broad-process-kill: kill of a recorded PID → pass"     0 45-broad-process-kill.sh plant_killpid
 caso "broad-process-kill: sin quoted in a .md → pass"        0 45-broad-process-kill.sh plant_pkilldoc
 
+# ── 47-unquoted-globstar ──────────────────────────────────────────────────────
+# The sin: `**` unquoted in a package.json script. The shell flattens it to one directory
+# level before the runner sees it, so tests outside that level are never opened — and the
+# suite reports success for files it never ran.
+plant_globbare()   { printf '{\n  "scripts": {\n    "test": "tsx --test src/**/*.test.ts"\n  }\n}\n' > package.json; }
+plant_globquoted() { printf '{\n  "scripts": {\n    "test": "tsx --test '"'"'src/**/*.test.ts'"'"'"\n  }\n}\n' > package.json; }
+plant_globplain()  { printf '{\n  "scripts": {\n    "test": "tsx --test src/units.test.ts"\n  }\n}\n' > package.json; }
+# A `**` in another JSON file is a tool's own pattern language, not a shell argument.
+plant_globconfig() { printf '{\n  "pattern": "src/**/*.ts"\n}\n' > tool.json; }
+caso "unquoted-globstar: bare ** in a package.json script → WARN" 2 47-unquoted-globstar.sh plant_globbare
+caso "unquoted-globstar: ** inside shell quotes → pass"           0 47-unquoted-globstar.sh plant_globquoted
+caso "unquoted-globstar: script with no glob → pass"              0 47-unquoted-globstar.sh plant_globplain
+caso "unquoted-globstar: ** in a non-package.json file → pass"    0 47-unquoted-globstar.sh plant_globconfig
+
 # The guard count is written in five places and was already wrong once (docs said
 # 18, guards.d held 19). Numbers a human maintains by hand drift; assert it.
 GN=$(find "$GUARDS" -name '*.sh' | grep -c . || true)
