@@ -1704,6 +1704,30 @@ caso "pipeline-exit-code: redirect to a file, read \$? → pass"      0 48-pipel
 caso "pipeline-exit-code: pipeline ending in grep -q → pass"        0 48-pipeline-exit-code.sh plant_pipeqgrep
 caso "pipeline-exit-code: the sin written in a .txt → pass"         0 48-pipeline-exit-code.sh plant_pipeqdoc
 
+# ── 97-migration-edited ───────────────────────────────────────────────────────
+# The sin: a migration that already exists is EDITED (or removed) instead of appended. A step
+# that already ran leaves that database in the OLD shape; a fresh one gets the new text — the
+# two diverge in silence. Adding a file is normal; only changing/removing an existing one fires.
+# The seed commit makes the migration part of the BASE, so the next commit is a real edit.
+seed_migration() { # seed_migration <dir>
+  mkdir -p "$1" && printf 'create table t (id int);\n' > "$1/001_init.sql"
+  git add -A >/dev/null 2>&1 && git commit -qm seed
+}
+plant_migedit()     { seed_migration migrations;                printf 'create table t (id bigint);\n' > migrations/001_init.sql; }
+plant_migeditnest() { seed_migration supabase/migrations;       printf 'create table t (id bigint);\n' > supabase/migrations/001_init.sql; }
+plant_migdelete()   { seed_migration migrations;                rm migrations/001_init.sql; }
+plant_migappend()   { seed_migration migrations;                printf 'alter table t add column n int;\n' > migrations/002_add_n.sql; }
+# `verify-migrations.sh` verifies migrations, it is not one: the DIRECTORY decides, not the word.
+plant_migscript()   { seed_migration migrations; mkdir -p scripts; printf '#!/usr/bin/env bash\n:\n' > scripts/verify-migrations.sh
+                      git add -A >/dev/null 2>&1; git commit -qm seed2; printf '#!/usr/bin/env bash\necho ok\n' > scripts/verify-migrations.sh; }
+plant_migreadme()   { seed_migration migrations; printf '# migrations\n' > migrations/README.md; git add -A >/dev/null 2>&1; git commit -qm seed2; printf '# migrations (edited)\n' > migrations/README.md; }
+caso "migration-edited: an existing migration modified → WARN"        2 97-migration-edited.sh plant_migedit
+caso "migration-edited: edited under supabase/migrations → WARN"      2 97-migration-edited.sh plant_migeditnest
+caso "migration-edited: an existing migration deleted → WARN"         2 97-migration-edited.sh plant_migdelete
+caso "migration-edited: a NEW migration appended → pass"              0 97-migration-edited.sh plant_migappend
+caso "migration-edited: a script named verify-migrations → pass"      0 97-migration-edited.sh plant_migscript
+caso "migration-edited: the migrations README edited → pass"          0 97-migration-edited.sh plant_migreadme
+
 # The guard count is written in five places and was already wrong once (docs said
 # 18, guards.d held 19). Numbers a human maintains by hand drift; assert it.
 GN=$(find "$GUARDS" -name '*.sh' | grep -c . || true)
