@@ -1687,6 +1687,23 @@ caso "unquoted-globstar: ** inside shell quotes → pass"           0 47-unquote
 caso "unquoted-globstar: script with no glob → pass"              0 47-unquoted-globstar.sh plant_globplain
 caso "unquoted-globstar: ** in a non-package.json file → pass"    0 47-unquoted-globstar.sh plant_globconfig
 
+# ── 48-pipeline-exit-code ─────────────────────────────────────────────────────
+# The sin: `$?` read straight after a pipeline ending in a formatter, in a script without
+# pipefail — that is the formatter's status (tail succeeds at printing a failure), not the
+# status of the command whose success was being measured.
+plant_pipeqbare()    { printf '#!/usr/bin/env bash\nnpm run e2e 2>&1 | tail -3\necho "exit: $?"\n' > check.sh; }
+plant_pipeqpipefail() { printf '#!/usr/bin/env bash\nset -euo pipefail\nnpm run e2e 2>&1 | tail -3\necho "exit: $?"\n' > check.sh; }
+plant_pipeqfile()    { printf '#!/usr/bin/env bash\nnpm run e2e > out.log 2>&1\necho "exit: $?"\ntail -3 out.log\n' > check.sh; }
+# A pipeline whose last stage DECIDES (grep -q) is not a formatter: its status is the answer.
+plant_pipeqgrep()    { printf '#!/usr/bin/env bash\nnpm ls | grep -q left-pad\necho "found: $?"\n' > check.sh; }
+# Only shell scripts are read: the same two lines in prose are not a measurement.
+plant_pipeqdoc()     { printf 'run: npm run e2e 2>&1 | tail -3\nthen echo "exit: $?"\n' > NOTES.txt; }
+caso "pipeline-exit-code: \$? after | tail, no pipefail → WARN"    2 48-pipeline-exit-code.sh plant_pipeqbare
+caso "pipeline-exit-code: same lines with pipefail → pass"          0 48-pipeline-exit-code.sh plant_pipeqpipefail
+caso "pipeline-exit-code: redirect to a file, read \$? → pass"      0 48-pipeline-exit-code.sh plant_pipeqfile
+caso "pipeline-exit-code: pipeline ending in grep -q → pass"        0 48-pipeline-exit-code.sh plant_pipeqgrep
+caso "pipeline-exit-code: the sin written in a .txt → pass"         0 48-pipeline-exit-code.sh plant_pipeqdoc
+
 # The guard count is written in five places and was already wrong once (docs said
 # 18, guards.d held 19). Numbers a human maintains by hand drift; assert it.
 GN=$(find "$GUARDS" -name '*.sh' | grep -c . || true)
