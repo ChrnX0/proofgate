@@ -120,6 +120,56 @@ caso_tool() { # caso_tool <name> <expected-exit> <setup-fn> <assert-fn> -- <scri
   rm -rf "$tmp" "$remote"
 }
 
+echo "══ pg_match: one grep for the guard, not one per line ══════"
+# A cicatriz medida: num branch com 31.182 linhas adicionadas, cada guard de diff
+# gastava setenta segundos — dois processos por linha, mais de um milhão de forks
+# por execução. O que estes casos protegem é a EQUIVALÊNCIA: o filtro rápido tem
+# que casar exatamente o que o laço por linha casava, incluindo as duas regras que
+# existiam por um motivo.
+pg_match_caso() { # pg_match_caso <nome> <entrada> <padrao> <esperado> [-i]
+  local nome="$1" entrada="$2" padrao="$3" esperado="$4" ci="${5:-}"
+  local saida
+  # shellcheck source=/dev/null
+  if [ -n "$ci" ]; then
+    saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao" "$ci"))"
+  else
+    saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao"))"
+  fi
+  if [ "$saida" = "$esperado" ]; then echo "PASS  $nome"; PASS=$((PASS + 1))
+  else echo "FAIL  $nome — esperado [$esperado], veio [$saida]"; FAIL=$((FAIL + 1)); fi
+}
+
+TAB="$(printf '\t')"
+pg_match_caso "pg_match: keeps the matching record whole" \
+  "a.ts${TAB}const x = parseFloat(v);" 'parseFloat' "a.ts${TAB}const x = parseFloat(v);"
+
+pg_match_caso "pg_match: drops what does not match" \
+  "a.ts${TAB}const x = 1;" 'parseFloat' ""
+
+# A regra que o laço por linha existia para garantir: o padrão casa o CONTEÚDO,
+# nunca o caminho. Sem isso, um guard de "float" acusaria todo arquivo chamado
+# `float.ts` e a fábrica aprenderia a ignorar o guard.
+pg_match_caso "pg_match: the path is not scanned, only the content" \
+  "src/parseFloat.ts${TAB}const x = 1;" 'parseFloat' ""
+
+# Linha de diff com tabulação própria: dividir em todas as tabulações truncaria o
+# conteúdo e o padrão deixaria de casar o fim da linha.
+pg_match_caso "pg_match: content keeps its own tabs" \
+  "a.go${TAB}if x {${TAB}// parseFloat" 'parseFloat' "a.go${TAB}if x {${TAB}// parseFloat"
+
+pg_match_caso "pg_match: case-insensitive only when asked" \
+  "a.sql${TAB}SELECT 1 FROM t" 'select' "" 
+pg_match_caso "pg_match: -i matches regardless of case" \
+  "a.sql${TAB}SELECT 1 FROM t" 'select' "a.sql${TAB}SELECT 1 FROM t" -i
+
+# `\b` é extensão do GNU grep e não existe em awk POSIX: é a razão pela qual o
+# casamento continua em grep em vez de ser traduzido para awk. Se isto quebrar, a
+# tradução foi feita e algum guard parou de casar em silêncio.
+pg_match_caso "pg_match: GNU word boundaries still work" \
+  "a.ts${TAB}let n: float = 1;" ':[[:space:]]*float\b' "a.ts${TAB}let n: float = 1;"
+
+pg_match_caso "pg_match: empty stream is empty output, not an error" "" 'anything' ""
+
 echo "══ guards ═══════════════════════════════════════════════════"
 # ── 10-secrets ────────────────────────────────────────────────────────────────
 plant_token()  { echo 'const k = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";' > leak.ts; }
