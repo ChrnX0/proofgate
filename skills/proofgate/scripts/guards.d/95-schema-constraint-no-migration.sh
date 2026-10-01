@@ -22,17 +22,23 @@ CONSTRAINT='(^|[[:space:],(])(check[[:space:]]*\(|unique[[:space:]]*\(|not[[:spa
 MIGRATION='alter[[:space:]]+table|add[[:space:]]+constraint|migrat|__migration'  # proofgate-allow
 
 tab="$(printf '\t')"; n=0; files=""
+# A restrição casa num grep só para o guard inteiro. O filtro de arquivo e o
+# `git diff` por arquivo ficam no laço, que agora vê um punhado de linhas — antes
+# ele rodava um `git diff` POR LINHA adicionada, e era daí que vinham oitenta
+# segundos.
 while IFS="$tab" read -r file content; do
   # Only files that look like a schema definition — not application code.
-  printf '%s' "$file" | grep -Eiq '\.(sql|ddl)$|schema|migration' || continue
-  printf '%s' "$content" | grep -Eiq "$CONSTRAINT" || continue
+  case "$file" in
+    *.sql|*.ddl|*schema*|*migration*) ;;
+    *) continue ;;
+  esac
   # A brand-new table is fine: nothing exists yet, so CREATE TABLE carries it.
   # Only an EXISTING table's create block is the trap, and `if not exists` is its tell.
   git diff "$BASE"..HEAD -- "$file" | grep -Eiq 'create[[:space:]]+table[[:space:]]+if[[:space:]]+not[[:space:]]+exists' || continue
   pg_ignored "$(pg_fingerprint schema-constraint-no-migration "$file" "$content")" && continue
   n=$((n + 1))
   case " $files " in *" $file "*) ;; *) files="$files $file" ;; esac
-done < <(pg_added_with_file)
+done < <(pg_added_with_file | pg_match "$CONSTRAINT" -i)
 
 [ "$n" -gt 0 ] || { echo "✅ schema-constraint-no-migration: no constraint added to an if-not-exists table"; exit 0; }
 

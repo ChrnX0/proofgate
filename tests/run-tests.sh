@@ -120,6 +120,56 @@ caso_tool() { # caso_tool <name> <expected-exit> <setup-fn> <assert-fn> -- <scri
   rm -rf "$tmp" "$remote"
 }
 
+echo "══ pg_match: one grep for the guard, not one per line ══════"
+# A cicatriz medida: num branch com 31.182 linhas adicionadas, cada guard de diff
+# gastava setenta segundos — dois processos por linha, mais de um milhão de forks
+# por execução. O que estes casos protegem é a EQUIVALÊNCIA: o filtro rápido tem
+# que casar exatamente o que o laço por linha casava, incluindo as duas regras que
+# existiam por um motivo.
+pg_match_caso() { # pg_match_caso <nome> <entrada> <padrao> <esperado> [-i]
+  local nome="$1" entrada="$2" padrao="$3" esperado="$4" ci="${5:-}"
+  local saida
+  # shellcheck source=/dev/null
+  if [ -n "$ci" ]; then
+    saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao" "$ci"))"
+  else
+    saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao"))"
+  fi
+  if [ "$saida" = "$esperado" ]; then echo "PASS  $nome"; PASS=$((PASS + 1))
+  else echo "FAIL  $nome — esperado [$esperado], veio [$saida]"; FAIL=$((FAIL + 1)); fi
+}
+
+TAB="$(printf '\t')"
+pg_match_caso "pg_match: keeps the matching record whole" \
+  "a.ts${TAB}const x = parseFloat(v);" 'parseFloat' "a.ts${TAB}const x = parseFloat(v);"
+
+pg_match_caso "pg_match: drops what does not match" \
+  "a.ts${TAB}const x = 1;" 'parseFloat' ""
+
+# A regra que o laço por linha existia para garantir: o padrão casa o CONTEÚDO,
+# nunca o caminho. Sem isso, um guard de "float" acusaria todo arquivo chamado
+# `float.ts` e a fábrica aprenderia a ignorar o guard.
+pg_match_caso "pg_match: the path is not scanned, only the content" \
+  "src/parseFloat.ts${TAB}const x = 1;" 'parseFloat' ""
+
+# Linha de diff com tabulação própria: dividir em todas as tabulações truncaria o
+# conteúdo e o padrão deixaria de casar o fim da linha.
+pg_match_caso "pg_match: content keeps its own tabs" \
+  "a.go${TAB}if x {${TAB}// parseFloat" 'parseFloat' "a.go${TAB}if x {${TAB}// parseFloat"
+
+pg_match_caso "pg_match: case-insensitive only when asked" \
+  "a.sql${TAB}SELECT 1 FROM t" 'select' "" 
+pg_match_caso "pg_match: -i matches regardless of case" \
+  "a.sql${TAB}SELECT 1 FROM t" 'select' "a.sql${TAB}SELECT 1 FROM t" -i
+
+# `\b` é extensão do GNU grep e não existe em awk POSIX: é a razão pela qual o
+# casamento continua em grep em vez de ser traduzido para awk. Se isto quebrar, a
+# tradução foi feita e algum guard parou de casar em silêncio.
+pg_match_caso "pg_match: GNU word boundaries still work" \
+  "a.ts${TAB}let n: float = 1;" ':[[:space:]]*float\b' "a.ts${TAB}let n: float = 1;"
+
+pg_match_caso "pg_match: empty stream is empty output, not an error" "" 'anything' ""
+
 echo "══ guards ═══════════════════════════════════════════════════"
 # ── 10-secrets ────────────────────────────────────────────────────────────────
 plant_token()  { echo 'const k = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";' > leak.ts; }
@@ -279,6 +329,44 @@ plant_ddlnew() { printf 'create table teams (\n  id uuid primary key,\n  name te
 caso "schema-constraint: check in if-not-exists → WARN"  2 95-schema-constraint-no-migration.sh plant_ddl
 caso "schema-constraint: shipped with ALTER → pass"      0 95-schema-constraint-no-migration.sh plant_ddlok
 caso "schema-constraint: brand-new table → pass"         0 95-schema-constraint-no-migration.sh plant_ddlnew
+
+# ── 92-superuser-verification ─────────────────────────────────────────────────
+# Os setups plantam a POLÍTICA junto, e isso não é enfeite: o guard se cala em
+# repositório sem row level security, porque lá não existe nada para ignorar. Sem a
+# política, o caso positivo passava verde e eu teria concluído que o guard funciona.
+# O pecado: o caminho de VERIFICAÇÃO conecta no Postgres como superusuário. Superusuário
+# ignora row level security, então a política nunca é avaliada — a suíte prova que as
+# colunas batem e absolutamente nada sobre o servidor aceitar a escrita. Este guard
+# nasceu de uma barra verde inteira que atravessou com uma premissa errada por causa
+# disso.
+plant_super()   { mkdir -p scripts supabase/migrations
+                  printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                  printf 'psql -U postgres -d "$DB" -f queue.sql\n' > scripts/verify-db.sh; }
+# O comentário que AVISA contra o superusuário não é a ofensa — e acusar o comentário
+# ensina a parar de escrever comentário.
+plant_supercmt(){ mkdir -p scripts supabase/migrations
+                  printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                  printf '# nunca rode isto com -U postgres: RLS nao seria avaliada\npsql "$DB" -f queue.sql\n' > scripts/verify-db.sh; }
+# Código de produção conectando como quiser não é assunto deste guard: ele cobra o
+# caminho que IMITA o cliente.
+plant_superprod(){ mkdir -p src supabase/migrations
+                   printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                   printf 'const url = "postgres://postgres@localhost/app";\n' > src/db.ts; }
+caso "superuser: verification path as superuser → WARN"  2 92-superuser-verification.sh plant_super
+caso "superuser: the warning comment is not the sin"     0 92-superuser-verification.sh plant_supercmt
+caso "superuser: product code is not this guard s job"   0 92-superuser-verification.sh plant_superprod
+
+# ── 99-dead-allow ─────────────────────────────────────────────────────────────
+# O pecado é da própria ferramenta: o marcador `proofgate-allow` é casado contra a
+# LINHA ADICIONADA. Escrito no comentário ACIMA do código que ele quer desculpar, ele
+# não suprime nada — e lê exatamente como um achado tratado. É pior que aviso sem
+# justificativa: é uma placa de "resolvido" ligada em nada.
+plant_deadallow() { printf '// proofgate-allow\nconst rx = /token/;\n' > a.ts; }
+# Na própria linha, ele funciona — e passar aqui é o que separa o guard de um que
+# proíbe o marcador.
+plant_liveallow() { printf 'const rx = /token/; // proofgate-allow\n' > a.ts; }
+caso "dead-allow: marker alone on a comment line → WARN" 2 99-dead-allow.sh plant_deadallow
+caso "dead-allow: marker on the offending line → pass"   0 99-dead-allow.sh plant_liveallow
 
 # ── 96-version-bump-no-release ────────────────────────────────────────────────
 # The sin: a manifest version goes up and nothing in the delivery cuts a release, so
@@ -643,6 +731,51 @@ H3="$(hy "$D3" list --open | awk '{print $1}' | head -1)"; hy "$D3" refute "$H3"
 SECOND="$(hy "$D3" open --kind diagnosis --symptom once --hypothesis "second idea")"
 ok_t "$(printf '%s' "$SECOND" | grep -q ESCALATED && echo 0 || echo 1)" "hypothesis: one refutation does NOT escalate (negative)"
 rm -rf "$D2" "$D3"
+
+# ── 92-signature-raw-body ─────────────────────────────────────────────────────
+# The sin: HMAC over a body that was parsed and re-serialized — the digest covers a
+# different text than the one that arrived, so every legitimate delivery is rejected.
+plant_sigparsed() {
+  printf 'const body = await req.json();\nconst mac = createHmac("sha256", secret).update(JSON.stringify(body)).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > hook.ts
+}
+plant_sigraw() {
+  printf 'const raw = await req.text();\nconst mac = createHmac("sha256", secret).update(raw).digest();\nif (mac.length !== got.length) return r401();\nconst body = JSON.parse(raw);\n' > hook.ts
+}
+caso "signature-raw-body: HMAC over parsed body → WARN"  2 92-signature-raw-body.sh plant_sigparsed
+caso "signature-raw-body: HMAC over raw text → pass"     0 92-signature-raw-body.sh plant_sigraw
+# The same mistake from the SENDING side: signing a re-serialization of a value you
+# read back. A jsonb column reorders keys, the digest moves, and every redelivery is
+# rejected — while a dev database storing that column as TEXT hides it completely.
+plant_signreserial() {
+  printf 'const mac = createHmac("sha256", secret).update(JSON.stringify(row.payload)).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+plant_signkept() {
+  printf 'const body = row.signed_body;\nconst mac = createHmac("sha256", secret).update(body).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+# Signing an inline literal is exempt: there is no earlier text to be faithful to.
+plant_signliteral() {
+  printf 'const mac = createHmac("sha256", secret).update(JSON.stringify({ ping: 1 })).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+caso "signature-raw-body: HMAC over a re-serialized variable → WARN" 2 92-signature-raw-body.sh plant_signreserial
+caso "signature-raw-body: HMAC over the kept text → pass"           0 92-signature-raw-body.sh plant_signkept
+caso "signature-raw-body: HMAC over an inline literal → pass"       0 92-signature-raw-body.sh plant_signliteral
+
+# ── 94-verdict-from-exit-code ─────────────────────────────────────────────────
+# The sin: a pass/fail decision read from matched OUTPUT instead of the exit code —
+# the filter can cut the very line that reports the failure.
+plant_verdictgrep() {
+  printf '#!/usr/bin/env bash\n# example of the sin: out=$(vitest run x | tail -3)\nout=$(npx vitest run target | tail -3)\nif echo "$out" | grep -q "failed"; then echo KILLED; else echo SURVIVED; fi\n' > mutate.sh
+}
+plant_verdictexit() {
+  printf '#!/usr/bin/env bash\nif npx vitest run target > out.log 2>&1; then echo SURVIVED; else echo KILLED; fi\ngrep -c FAIL out.log\n' > mutate.sh
+}
+# Reading output for DISPLAY is legitimate — only capture/condition is the sin.
+plant_verdictread() {
+  printf '#!/usr/bin/env bash\nnpx vitest run target | tail -20\n' > mutate.sh
+}
+caso "verdict-from-exit-code: grep on output decides → WARN"   2 94-verdict-from-exit-code.sh plant_verdictgrep
+caso "verdict-from-exit-code: exit code decides → pass"        0 94-verdict-from-exit-code.sh plant_verdictexit
+caso "verdict-from-exit-code: piping only to READ → pass"      0 94-verdict-from-exit-code.sh plant_verdictread
 
 # ── 93-hypothesis-required ────────────────────────────────────────────────────
 plant_fixbranch()   { git checkout -qb fix/login 2>/dev/null; echo 'export const x=2;' > a.ts; }

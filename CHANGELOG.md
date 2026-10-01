@@ -1,5 +1,133 @@
 # Changelog
 
+## 3.3.0 — 2026-09-14
+
+A signature covers bytes, and a JSON column may rewrite them.
+
+### Added
+
+- **`92-signature-raw-body` now covers the SENDING side**: an HMAC computed over
+  `JSON.stringify(<variable>)`. You can only reproduce a signature over text you KEPT —
+  sign a re-serialization and the original is gone. The scar: a webhook retry rebuilt the
+  body from a `jsonb` column, and jsonb NORMALIZES (reorders keys, strips whitespace), so
+  the digest moved and the subscriber rejected every redelivery.
+
+  What makes this one nasty is where it hides. The development database stored that same
+  column as TEXT, where parse-then-stringify round-trips byte-identical **by accident** —
+  so no local test could see the divergence, and the defect would have debuted in
+  production, in the most confusing possible form ("the retry does not work and I cannot
+  tell why"). It surfaced only because a planted mutation *survived*, and the question
+  "in which dialect does this diverge?" was asked instead of "the mutation must be
+  harmless".
+
+  Signing an inline object literal stays exempt: there is no earlier text to be faithful
+  to. Signing a variable is what the guard flags.
+
+### Changed
+
+- **One row in the excuse-buster table**: "I re-sign the payload before resending it" →
+  can you reproduce the exact text you signed? Keep the signed bytes in a `text` column;
+  a row without them is not retryable and should say so, rather than going out with a
+  signature that cannot match.
+- Test suite 249 → 252 cases for this guard (re-serialized variable warns; the kept text
+  passes; an inline literal passes).
+
+## 3.2.0 — 2026-09-14
+
+A verdict is an exit code, not a word you found in the output.
+
+### Added
+
+- **Guard `94-verdict-from-exit-code`** — a pass/fail decision read from matched OUTPUT
+  instead of the process's exit status. The scar: a mutation run reported SURVIVED for
+  five mutations in a row, one of them re-introducing the exact regression the tests had
+  just been written to catch. The tests were fine; the judge was
+  `out=$(runner | tail -3); if echo "$out" | grep -q failed; …` — and `tail -3` of that
+  runner returns "Start at" and "Duration", cutting above the `Tests N failed` line. The
+  grep could never match, so "I did not find a failure" silently became "it passed".
+
+  Output filters are for COUNTING once you already know it failed, never for deciding
+  whether it failed: runners reword their summaries between versions, localize them,
+  hide them behind a progress bar, or push them past whatever `tail`/`head` kept — and
+  every one of those turns a red run green. The discriminator the guard uses is
+  capture-or-condition: piping output to `tail` just to READ it is fine; using that text
+  as the verdict — inside an `if`, behind `&&`/`||`, or captured into `$( )` — is the
+  sin. Comment lines are excluded, since they decide nothing and the guard would
+  otherwise flag the example in its own header.
+
+  Sibling of the 3.0.1 excuse-breaker, where a PIPELINE's `$?` was the last command's:
+  there the exit code was read from the wrong process, here it is not read at all.
+
+### Changed
+
+- **Two rows in the excuse-buster table.** One for mutation testing: a run is only
+  meaningful with an UNMUTATED baseline that comes back green and a harmless SENTINEL
+  that must survive — a dead sentinel means the judge fails everything, and everything
+  surviving alongside it means the judge passes everything. One for faked clocks: a
+  fake-timer moves the process clock only, so a column default is still the database's
+  clock and an application timestamp a third; pinning only one end produced a metric
+  where every row landed in the same bucket, and hid a production defect where the
+  resulting negative interval was clamped to zero.
+- Guard count 24 → 25; test suite 246 → 249 cases (three for the new guard: the sin, the
+  exit-code rewrite, and output piped only for DISPLAY, which must stay quiet).
+
+## 3.1.0 — 2026-09-14
+
+An HMAC covers the bytes that arrived.
+
+### Added
+
+- **Guard `92-signature-raw-body`** — a webhook whose signature is verified against a
+  RE-SERIALIZED body. `X-Hub-Signature-256`, `Stripe-Signature` and friends are an HMAC
+  of the bytes that arrived; parse the body first and hash `JSON.stringify(parsed)` and
+  you are digesting a different text — one space, one key order, one unicode escape
+  apart. The failure is quiet in the worst way: every legitimate delivery is rejected,
+  and the fix someone reaches for is deleting the check, which leaves the endpoint open
+  to anyone on the internet. The guard fires when a file touched by the diff verifies a
+  signature AND reads its body through `.json()`, and separately when `timingSafeEqual`
+  appears with no length comparison — it THROWS on buffers of different lengths, so a
+  forged short signature becomes a 500 with a stack trace instead of a clean 401.
+
+  The trigger is the FILE's content, not the added lines: in a real regression what
+  changes is how the body is read, while the HMAC line sits untouched. A first version
+  that only inspected added lines let exactly that sin through, and was caught by
+  deliberately planting it.
+
+- **Excuse-breaker row: "The webhook verifies its signature, so the endpoint is safe."**
+  Against which bytes? Plus the negative path the row demands: no signature, and a
+  signature made with the wrong secret, each asserting that NOTHING was written.
+
+## 3.0.2 — 2026-09-13
+
+The background job's exit code is not the fork's.
+
+### Fixed
+
+- **The excuse-breaker row added in 3.0.1 covered `cmd &` but prescribed a recipe that
+  only works in the foreground.** `$?` immediately after launching a background job
+  reports that the fork started, not how the job ended — so the row could certify a
+  failed check as exit 0, which is the exact mistake it exists to stop. It now gives
+  both forms: `cmd > out.txt 2>&1; echo $?` in the foreground, and
+  `cmd > out.txt 2>&1 & pid=$!; wait "$pid"; echo $?` in the background, with the note
+  that a backgrounded pipeline still needs `set -o pipefail`. The mirror in
+  `agents/gate-skeptic.md` carries the same correction.
+
+  Found by an automated reviewer on the 3.0.1 pull request, after the merge.
+
+## 3.0.1 — 2026-09-13
+
+Read the exit code of the command, not of the pipe.
+
+### Added
+
+- **Excuse-breaker row: "I ran `cmd | tail`, exit 0, the end of the output was clean."**
+  A pipeline exits with the LAST command's status, and the tail of a tool's output is
+  the package manager's update notice — the errors sit above it. A typecheck with 300+
+  errors (every relative import of freshly split modules pointing one directory up) was
+  declared green exactly this way; the test suite caught it. The row states the recipe:
+  output to a file, the command's own `$?`, count the signal, and **sabotage the check
+  on purpose once** so you have seen it catch something before you trust its silence.
+
 ## 3.0.0 — 2026-09-02
 
 The proof travels with the commit.
