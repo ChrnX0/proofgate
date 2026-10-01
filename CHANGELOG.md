@@ -18,6 +18,16 @@
   hid for as long as nobody counted. Warns on an added package.json script value carrying `**`
   with no shell quote around it. Guard count 32 → 33.
 
+- **Guard `48-pipeline-exit-code`, sent back from a project that vendors the gate.** The scar:
+  `npm run e2e 2>&1 | tail -3` then `echo "exit: $?"` prints `tail`'s status, not the command
+  being measured — and `tail` succeeds at printing three lines of a failure, so the measurement
+  read 0 while the thing under test read 1. It was expensive because the run was checking
+  whether a guard exits non-zero on an empty suite: "prints the message but exits 0" was the very
+  defect being fixed, so the wrong reading looked like the bug reproducing. Warns on a `$?` read
+  on the line after a formatter pipeline (`tail`, `head`, `cut`, `tr`, `sort`, `uniq`, `column`,
+  `fmt`, `jq`, `tee`, `less`, `cat`) in a shell script without `set -o pipefail`. Guard count
+  33 → 34.
+
 ## 3.4.0 — 2026-09-30
 
 A lesson that stays in one project protects that project only — and a mutation list is only worth having if the gate can tell when it has gone stale.
