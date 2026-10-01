@@ -124,6 +124,56 @@ caso_tool() { # caso_tool <name> <expected-exit> <setup-fn> <assert-fn> -- <scri
   rm -rf "$tmp" "$remote"
 }
 
+echo "══ pg_match: one grep for the guard, not one per line ══════"
+# A cicatriz medida: num branch com 31.182 linhas adicionadas, cada guard de diff
+# gastava setenta segundos — dois processos por linha, mais de um milhão de forks
+# por execução. O que estes casos protegem é a EQUIVALÊNCIA: o filtro rápido tem
+# que casar exatamente o que o laço por linha casava, incluindo as duas regras que
+# existiam por um motivo.
+pg_match_caso() { # pg_match_caso <nome> <entrada> <padrao> <esperado> [-i]
+  local nome="$1" entrada="$2" padrao="$3" esperado="$4" ci="${5:-}"
+  local saida
+  # shellcheck source=/dev/null
+  if [ -n "$ci" ]; then
+    saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao" "$ci"))"
+  else
+    saida="$(printf '%s' "$entrada" | (PROOFGATE_BASE=x . "$LIB" 2>/dev/null; pg_match "$padrao"))"
+  fi
+  if [ "$saida" = "$esperado" ]; then echo "PASS  $nome"; PASS=$((PASS + 1))
+  else echo "FAIL  $nome — esperado [$esperado], veio [$saida]"; FAIL=$((FAIL + 1)); fi
+}
+
+TAB="$(printf '\t')"
+pg_match_caso "pg_match: keeps the matching record whole" \
+  "a.ts${TAB}const x = parseFloat(v);" 'parseFloat' "a.ts${TAB}const x = parseFloat(v);"
+
+pg_match_caso "pg_match: drops what does not match" \
+  "a.ts${TAB}const x = 1;" 'parseFloat' ""
+
+# A regra que o laço por linha existia para garantir: o padrão casa o CONTEÚDO,
+# nunca o caminho. Sem isso, um guard de "float" acusaria todo arquivo chamado
+# `float.ts` e a fábrica aprenderia a ignorar o guard.
+pg_match_caso "pg_match: the path is not scanned, only the content" \
+  "src/parseFloat.ts${TAB}const x = 1;" 'parseFloat' ""
+
+# Linha de diff com tabulação própria: dividir em todas as tabulações truncaria o
+# conteúdo e o padrão deixaria de casar o fim da linha.
+pg_match_caso "pg_match: content keeps its own tabs" \
+  "a.go${TAB}if x {${TAB}// parseFloat" 'parseFloat' "a.go${TAB}if x {${TAB}// parseFloat"
+
+pg_match_caso "pg_match: case-insensitive only when asked" \
+  "a.sql${TAB}SELECT 1 FROM t" 'select' "" 
+pg_match_caso "pg_match: -i matches regardless of case" \
+  "a.sql${TAB}SELECT 1 FROM t" 'select' "a.sql${TAB}SELECT 1 FROM t" -i
+
+# `\b` é extensão do GNU grep e não existe em awk POSIX: é a razão pela qual o
+# casamento continua em grep em vez de ser traduzido para awk. Se isto quebrar, a
+# tradução foi feita e algum guard parou de casar em silêncio.
+pg_match_caso "pg_match: GNU word boundaries still work" \
+  "a.ts${TAB}let n: float = 1;" ':[[:space:]]*float\b' "a.ts${TAB}let n: float = 1;"
+
+pg_match_caso "pg_match: empty stream is empty output, not an error" "" 'anything' ""
+
 echo "══ guards ═══════════════════════════════════════════════════"
 # ── 10-secrets ────────────────────────────────────────────────────────────────
 plant_token()  { echo 'const k = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";' > leak.ts; }
@@ -200,6 +250,36 @@ plant_noskip() { echo 'it("x", () => {});' > a.test.ts; }
 caso "skipped-tests: .skip added → WARN"         2 55-skipped-tests.sh plant_skip
 caso "skipped-tests: normal test → pass"         0 55-skipped-tests.sh plant_noskip
 
+# ── 56-vacuous-negative ───────────────────────────────────────────────────────
+plant_vacuous() {
+  printf '%s\n' \
+    'const offered = (answer.detail ?? []).map((d) => d.value).join(" ");' \
+    'assert.doesNotMatch(offered, /price/);' > a.test.ts
+}
+plant_vacuousok() {
+  printf '%s\n' \
+    'const offered = (answer.detail ?? []).map((d) => d.value).join(" ");' \
+    'assert.ok(offered.length > 0, "there is something to compare");' \
+    'assert.doesNotMatch(offered, /price/);' > a.test.ts
+}
+# Product code defaults to empty all the time and claims nothing about coverage.
+plant_vacuoussrc() {
+  printf '%s\n' \
+    'const offered = (answer.detail ?? []).map((d) => d.value).join(" ");' \
+    'assert.doesNotMatch(offered, /price/);' > a.ts
+}
+caso "vacuous-negative: absence over a defaulted-empty subject → WARN" 2 56-vacuous-negative.sh plant_vacuous
+caso "vacuous-negative: length asserted first → pass"                  0 56-vacuous-negative.sh plant_vacuousok
+caso "vacuous-negative: same shape in product code → pass"             0 56-vacuous-negative.sh plant_vacuoussrc
+# A aspa simples tem caso próprio: ela entra na expressão por variável, porque o
+# atalho `\x27` é extensão GNU e no awk do macOS sumiria em silêncio.
+plant_vacuousquote() {
+  printf '%s\n' \
+    "const offered = res.items || '';" \
+    'assert.doesNotMatch(offered, /price/);' > a.test.ts
+}
+caso "vacuous-negative: defaulted to an empty single-quoted string → WARN" 2 56-vacuous-negative.sh plant_vacuousquote
+
 # ── 58-frozen-clock ───────────────────────────────────────────────────────────
 plant_clock()  { echo 'const t = Date.now();' > a.test.ts; }
 plant_clockok(){ echo 'const t = Date.now();' > a.ts; }
@@ -242,6 +322,65 @@ plant_sqlok()  { echo 'db.query(sql`SELECT id FROM users`);' > a.ts; }
 caso "sql-concat: concatenated SQL → WARN"       2 90-sql-concat.sh plant_sql
 caso "sql-concat: tagged template → pass"        0 90-sql-concat.sh plant_sqlok
 
+# ── 94-two-release-publishers ─────────────────────────────────────────────────
+# The sin: two workflows that each derive the release tag from the manifest, so both
+# write the same single-writer namespace and dispatch order decides the winner. The scar
+# landed a 110 MiB binary from 177 commits back inside the good release, beside the good
+# one, under a note naming the good commit.
+#
+# The content goes in by QUOTED heredoc, and that is a scar of its own: written first as
+# `PUB=$(printf "... $(node -p 1) ...")`, the command substitution ran at assignment and
+# the planted workflow reached disk with its tag lines emptied. The four negative cases
+# still passed — an empty file is a fine negative — so only the positive spoke up. A
+# harness that plants the wrong sin makes every negative meaningless.
+pub_computa() { mkdir -p .github/workflows; cat > ".github/workflows/$1" <<'YAML'
+jobs:
+  b:
+    steps:
+      - run: |
+          VERSION=$(node -p "require('./app.json').version")
+          TAG="apk-$VERSION"
+          gh release create "$TAG" a.apk || gh release upload "$TAG" a.apk --clobber
+YAML
+}
+# A publisher the CALLER aims: the tag comes from the pushed ref, so it cannot collide
+# silently with another workflow's idea of the tag. This is the designed-pair case — one
+# creates the release, another adds assets to the tag it was handed.
+pub_do_evento() { mkdir -p .github/workflows; cat > ".github/workflows/$1" <<'YAML'
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  r:
+    steps:
+      - run: gh release upload "${{ github.ref_name }}" extra.zip
+YAML
+}
+# Reading a release is not publishing one.
+pub_leitor() { mkdir -p .github/workflows; cat > ".github/workflows/$1" <<'YAML'
+jobs:
+  r:
+    steps:
+      - run: gh release view --json url -q .url
+YAML
+}
+manifesto() { printf '{\n  "version": "0.9.0"\n}\n' > app.json; }
+plant_dois()      { manifesto; pub_computa build.yml;   pub_computa publish.yml; }
+plant_um()        { manifesto; pub_computa build.yml; }
+plant_par()       { manifesto; pub_computa build.yml;   pub_do_evento assets.yml; }
+plant_leitor()    { manifesto; pub_computa build.yml;   pub_leitor docs.yml; }
+# The occasion is what the diff decides. Two publishers already in the BASE, and a diff
+# touching neither CI nor a version, must stay quiet: state without an occasion is not the
+# moment to ask. Verified against the real scar repo too, where a commit that closed an
+# unrelated item left both publishers in place and this stayed silent.
+plant_semocasiao(){ plant_dois; git add -A >/dev/null 2>&1; git commit -qm base2 >/dev/null 2>&1
+                    printf 'const x = 1;\n' > src.ts; }
+caso "release-publishers: two self-computed tags → WARN"   2 94-two-release-publishers.sh plant_dois
+caso "release-publishers: only one publisher → pass"       0 94-two-release-publishers.sh plant_um
+caso "release-publishers: second is caller-aimed → pass"   0 94-two-release-publishers.sh plant_par
+caso "release-publishers: second only reads → pass"        0 94-two-release-publishers.sh plant_leitor
+caso "release-publishers: no release occasion → pass"      0 94-two-release-publishers.sh plant_semocasiao
+
 # ── 95-schema-constraint-no-migration ─────────────────────────────────────────
 # The sin: tightening a column inside `create table if not exists` — a no-op on any
 # database that already has the table, so the constraint never reaches production.
@@ -253,6 +392,44 @@ plant_ddlnew() { printf 'create table teams (\n  id uuid primary key,\n  name te
 caso "schema-constraint: check in if-not-exists → WARN"  2 95-schema-constraint-no-migration.sh plant_ddl
 caso "schema-constraint: shipped with ALTER → pass"      0 95-schema-constraint-no-migration.sh plant_ddlok
 caso "schema-constraint: brand-new table → pass"         0 95-schema-constraint-no-migration.sh plant_ddlnew
+
+# ── 92-superuser-verification ─────────────────────────────────────────────────
+# Os setups plantam a POLÍTICA junto, e isso não é enfeite: o guard se cala em
+# repositório sem row level security, porque lá não existe nada para ignorar. Sem a
+# política, o caso positivo passava verde e eu teria concluído que o guard funciona.
+# O pecado: o caminho de VERIFICAÇÃO conecta no Postgres como superusuário. Superusuário
+# ignora row level security, então a política nunca é avaliada — a suíte prova que as
+# colunas batem e absolutamente nada sobre o servidor aceitar a escrita. Este guard
+# nasceu de uma barra verde inteira que atravessou com uma premissa errada por causa
+# disso.
+plant_super()   { mkdir -p scripts supabase/migrations
+                  printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                  printf 'psql -U postgres -d "$DB" -f queue.sql\n' > scripts/verify-db.sh; }
+# O comentário que AVISA contra o superusuário não é a ofensa — e acusar o comentário
+# ensina a parar de escrever comentário.
+plant_supercmt(){ mkdir -p scripts supabase/migrations
+                  printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                  printf '# nunca rode isto com -U postgres: RLS nao seria avaliada\npsql "$DB" -f queue.sql\n' > scripts/verify-db.sh; }
+# Código de produção conectando como quiser não é assunto deste guard: ele cobra o
+# caminho que IMITA o cliente.
+plant_superprod(){ mkdir -p src supabase/migrations
+                   printf 'create policy p on t for select using (true);\n' > supabase/migrations/0001.sql
+                   printf 'const url = "postgres://postgres@localhost/app";\n' > src/db.ts; }
+caso "superuser: verification path as superuser → WARN"  2 92-superuser-verification.sh plant_super
+caso "superuser: the warning comment is not the sin"     0 92-superuser-verification.sh plant_supercmt
+caso "superuser: product code is not this guard s job"   0 92-superuser-verification.sh plant_superprod
+
+# ── 99-dead-allow ─────────────────────────────────────────────────────────────
+# O pecado é da própria ferramenta: o marcador `proofgate-allow` é casado contra a
+# LINHA ADICIONADA. Escrito no comentário ACIMA do código que ele quer desculpar, ele
+# não suprime nada — e lê exatamente como um achado tratado. É pior que aviso sem
+# justificativa: é uma placa de "resolvido" ligada em nada.
+plant_deadallow() { printf '// proofgate-allow\nconst rx = /token/;\n' > a.ts; }
+# Na própria linha, ele funciona — e passar aqui é o que separa o guard de um que
+# proíbe o marcador.
+plant_liveallow() { printf 'const rx = /token/; // proofgate-allow\n' > a.ts; }
+caso "dead-allow: marker alone on a comment line → WARN" 2 99-dead-allow.sh plant_deadallow
+caso "dead-allow: marker on the offending line → pass"   0 99-dead-allow.sh plant_liveallow
 
 # ── 96-version-bump-no-release ────────────────────────────────────────────────
 # The sin: a manifest version goes up and nothing in the delivery cuts a release, so
