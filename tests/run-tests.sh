@@ -1531,6 +1531,9 @@ if command -v node >/dev/null 2>&1; then
   MJ="$(mu_repo)"; printf '#!/bin/sh\nnode -e "if(require(\\"fs\\").readFileSync(\\"src/price.js\\",\\"utf8\\").endsWith(\\"\\\\n\\\\n\\"))process.exit(1)"\n' > "$MJ/test.sh"
   ok_t "$(mu_ok "$(mu "$MJ" -- ./test.sh)" 2)" "mutate --list: a suite that fails a harmless sentinel → BROKEN JUDGE (exit 2)"
   ok_t "$(mu_ok "$(mu "$(mu_repo)" --slice 3/2 -- ./test.sh)" 2)" "mutate --list: an invalid --slice is refused, not read as the whole list"
+  for bad in invalid -5 0; do
+    ok_t "$(mu_ok "$(mu "$(mu_repo)" --timeout "$bad" -- ./test.sh)" 2)" "mutate --list: --timeout $bad is a usage error (exit 2), not a crash"
+  done
 
   # slices cover the list once; the verdict is complete only when every slice is in
   MS="$(mu_repo)"
@@ -1658,8 +1661,12 @@ else echo "FAIL  portability: non-portable construct(s):"; printf '%s\n' "$BASH4
 # The guard count is written in five places and was already wrong once (docs said
 # 18, guards.d held 19). Numbers a human maintains by hand drift; assert it.
 GN=$(find "$GUARDS" -name '*.sh' | grep -c . || true)
-DRIFT=$(grep -rlE "\b(1[0-9]|[2-9][0-9])[ ]?(diff )?guards" "$ROOT/README.md" "$ROOT/skills/proofgate/SKILL.md" "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$ROOT/action.yml" 2>/dev/null \
-  | while IFS= read -r f; do grep -oE "\b(1[0-9]|[2-9][0-9])[ ]?(diff )?guards" "$f" | grep -oE '^[0-9]+' | while IFS= read -r n; do [ "$n" = "$GN" ] || echo "$f says $n"; done; done)
+# Each file is read with its line breaks folded: "**27\ndiff guards**" in SKILL.md slipped past a
+# line-by-line grep and stayed wrong for a release.
+DRIFT=$(for f in "$ROOT/README.md" "$ROOT/skills/proofgate/SKILL.md" "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$ROOT/action.yml"; do
+  [ -f "$f" ] || continue
+  tr '\n' ' ' < "$f" | sed 's/\*\*//g' | grep -oE "\b(1[0-9]|[2-9][0-9])[ ]*(diff )?guards" | grep -oE '^[0-9]+' | while IFS= read -r n; do [ "$n" = "$GN" ] || echo "$f says $n"; done
+done)
 if [ -z "$DRIFT" ]; then echo "PASS  docs: guard count matches guards.d ($GN)"; PASS=$((PASS + 1))
 else echo "FAIL  docs: guard count drift (guards.d has $GN):"; printf '%s\n' "$DRIFT" | sed 's/^/      /'; FAIL=$((FAIL + 1)); fi
 

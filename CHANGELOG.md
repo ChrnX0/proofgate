@@ -47,7 +47,7 @@ A lesson that stays in one project protects that project only — and a mutation
 
 ### Changed
 
-- Guard count 25 → 27; test suite 254 → 303 cases.
+- Guard count 29 → 31 (`88-mutation`, `91-upstream-drift`); test suite 285 → 337 cases.
 
 ## 3.3.0 — 2026-09-14
 

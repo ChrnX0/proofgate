@@ -203,7 +203,13 @@ if (sliceArg !== null) {
 const mine = slice ? entries.filter((_, idx) => idx % slice.n === slice.i - 1) : entries;
 if (mine.length === 0) fail(`slice ${sliceArg} holds no mutation of the ${entries.length} in the list`);
 
-const TIMEOUT_MS = Number(flag("--timeout") ?? 600) * 1000;
+const timeoutArg = flag("--timeout") ?? "600";
+// Number("x") is NaN and spawnSync throws a RangeError on it mid-baseline: a typo would read as a
+// crash, not as the usage error it is.
+if (!/^\d+(\.\d+)?$/.test(timeoutArg) || Number(timeoutArg) <= 0) {
+  fail(`--timeout needs a positive number of seconds; got "${timeoutArg}"`);
+}
+const TIMEOUT_MS = Number(timeoutArg) * 1000;
 
 /** The suite, read as three outcomes. 126/127 are "could not execute", not "a test failed". */
 function measure(dir) {
