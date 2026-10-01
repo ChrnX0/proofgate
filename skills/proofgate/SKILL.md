@@ -88,7 +88,7 @@ implies is the failure this whole skill exists to stop.
 
 Auto-detects your stack (pnpm/npm/yarn/bun, Cargo, Go, Python, Gradle/Maven, .NET,
 Ruby, PHP, Elixir, Deno) and runs what the machine checks better than judgment:
-typecheck / lint / tests (/ build) actually green; working tree committed; **34
+typecheck / lint / tests (/ build) actually green; working tree committed; **35
 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types,
 money-as-float, hand-built SQL, machine paths, dependency-lockfile drift,
 un-migrated schema constraints, …).

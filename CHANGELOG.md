@@ -28,6 +28,16 @@
   `fmt`, `jq`, `tee`, `less`, `cat`) in a shell script without `set -o pipefail`. Guard count
   33 → 34.
 
+- **Guard `97-migration-edited`, sent back from a project that vendors the gate** (it shares the
+  number 97 with `97-memory-stale` — the number is only order). The scar: migrations are
+  append-only for a reason with no workaround. A step that already ran somewhere leaves that
+  database in the shape the OLD text produced; editing the file changes what a FRESH database gets
+  and nothing else, so the two diverge in silence and every checkout is fine — until, months later,
+  a column exists on one machine and not another. Warns on a modified, renamed or deleted file
+  under `migrations/`, `db/migrate/`, `alembic/versions/` or `db/schema.rb`; adding a file is
+  normal, and the DIRECTORY decides, not the word (`scripts/verify-migrations.sh` verifies
+  migrations, it is not one). Guard count 34 → 35.
+
 ## 3.4.0 — 2026-09-30
 
 A lesson that stays in one project protects that project only — and a mutation list is only worth having if the gate can tell when it has gone stale.
