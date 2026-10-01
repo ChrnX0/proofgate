@@ -664,6 +664,51 @@ SECOND="$(hy "$D3" open --kind diagnosis --symptom once --hypothesis "second ide
 ok_t "$(printf '%s' "$SECOND" | grep -q ESCALATED && echo 0 || echo 1)" "hypothesis: one refutation does NOT escalate (negative)"
 rm -rf "$D2" "$D3"
 
+# ── 92-signature-raw-body ─────────────────────────────────────────────────────
+# The sin: HMAC over a body that was parsed and re-serialized — the digest covers a
+# different text than the one that arrived, so every legitimate delivery is rejected.
+plant_sigparsed() {
+  printf 'const body = await req.json();\nconst mac = createHmac("sha256", secret).update(JSON.stringify(body)).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > hook.ts
+}
+plant_sigraw() {
+  printf 'const raw = await req.text();\nconst mac = createHmac("sha256", secret).update(raw).digest();\nif (mac.length !== got.length) return r401();\nconst body = JSON.parse(raw);\n' > hook.ts
+}
+caso "signature-raw-body: HMAC over parsed body → WARN"  2 92-signature-raw-body.sh plant_sigparsed
+caso "signature-raw-body: HMAC over raw text → pass"     0 92-signature-raw-body.sh plant_sigraw
+# The same mistake from the SENDING side: signing a re-serialization of a value you
+# read back. A jsonb column reorders keys, the digest moves, and every redelivery is
+# rejected — while a dev database storing that column as TEXT hides it completely.
+plant_signreserial() {
+  printf 'const mac = createHmac("sha256", secret).update(JSON.stringify(row.payload)).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+plant_signkept() {
+  printf 'const body = row.signed_body;\nconst mac = createHmac("sha256", secret).update(body).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+# Signing an inline literal is exempt: there is no earlier text to be faithful to.
+plant_signliteral() {
+  printf 'const mac = createHmac("sha256", secret).update(JSON.stringify({ ping: 1 })).digest("hex");\nif (mac.length !== sig.length) return r401();\n' > send.ts
+}
+caso "signature-raw-body: HMAC over a re-serialized variable → WARN" 2 92-signature-raw-body.sh plant_signreserial
+caso "signature-raw-body: HMAC over the kept text → pass"           0 92-signature-raw-body.sh plant_signkept
+caso "signature-raw-body: HMAC over an inline literal → pass"       0 92-signature-raw-body.sh plant_signliteral
+
+# ── 94-verdict-from-exit-code ─────────────────────────────────────────────────
+# The sin: a pass/fail decision read from matched OUTPUT instead of the exit code —
+# the filter can cut the very line that reports the failure.
+plant_verdictgrep() {
+  printf '#!/usr/bin/env bash\n# example of the sin: out=$(vitest run x | tail -3)\nout=$(npx vitest run target | tail -3)\nif echo "$out" | grep -q "failed"; then echo KILLED; else echo SURVIVED; fi\n' > mutate.sh
+}
+plant_verdictexit() {
+  printf '#!/usr/bin/env bash\nif npx vitest run target > out.log 2>&1; then echo SURVIVED; else echo KILLED; fi\ngrep -c FAIL out.log\n' > mutate.sh
+}
+# Reading output for DISPLAY is legitimate — only capture/condition is the sin.
+plant_verdictread() {
+  printf '#!/usr/bin/env bash\nnpx vitest run target | tail -20\n' > mutate.sh
+}
+caso "verdict-from-exit-code: grep on output decides → WARN"   2 94-verdict-from-exit-code.sh plant_verdictgrep
+caso "verdict-from-exit-code: exit code decides → pass"        0 94-verdict-from-exit-code.sh plant_verdictexit
+caso "verdict-from-exit-code: piping only to READ → pass"      0 94-verdict-from-exit-code.sh plant_verdictread
+
 # ── 93-hypothesis-required ────────────────────────────────────────────────────
 plant_fixbranch()   { git checkout -qb fix/login 2>/dev/null; echo 'export const x=2;' > a.ts; }
 plant_featbranch()  { git checkout -qb feat/new 2>/dev/null; echo 'export const x=2;' > a.ts; }
