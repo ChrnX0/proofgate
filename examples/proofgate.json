@@ -73,6 +73,18 @@
     "timeoutSeconds": 900
   },
 
+  "$comment_mutation": "OPT-IN. mutation.list points at a JSONL file the project owns — {file, from, to, hurts} per line — and turns on 88-mutation: it checks, on every gate run and in milliseconds, that the list exists, that every anchor still occurs exactly once, that the last verdict (recorded by `mutate.mjs --list <file> -- <suite>`) is younger than maxAgeDays AND about the files as they are now, and that a rule-bearing file did not change without a new mutation (riskyGlobs; defaults to sensitiveGlobs). The hours of running the suite once per mutation stay out of the gate — slice them with --slice i/n. Without mutation.list the guard prints one line and exits 0.",
+  "mutation": {
+    "list": "mutations.jsonl",
+    "command": "npm test",
+    "maxAgeDays": 14
+  },
+
+  "$comment_upstream": "keepLocal names guards or scripts in .proofgate/ that are project-specific ON PURPOSE, so 91-upstream-drift stops asking for them to go back to the gate. Everything else the project added or changed is a lesson the gate has not seen: `upstream.sh diff <clone>` lists it, `upstream.sh send <clone>` stages it.",
+  "upstream": {
+    "keepLocal": []
+  },
+
   "$comment_skeptic": "requireSkeptic turns 99-skeptic-required from a WARN into a FAIL: an L3 change (auth, money, migrations, crypto, permissions) cannot be called done without a recorded adversarial pass for the CURRENT commit. Leave it off until the team runs the panel — a hard block on a step nobody has wired up is how a gate gets bypassed wholesale. calibration:false stops recording which guards fire and which get suppressed; the report it feeds (verify.sh --calibration) never changes configuration on its own.",
   "requireSkeptic": false,
   "calibration": true,

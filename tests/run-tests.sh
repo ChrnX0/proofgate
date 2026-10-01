@@ -17,6 +17,10 @@ VERIFY="$ROOT/skills/proofgate/scripts/verify.sh"
 LIB="$ROOT/skills/proofgate/scripts/lib.sh"
 export PROOFGATE_LIB="$LIB"
 PASS=0 FAIL=0
+# Per-run scratch files, not fixed /tmp names: two runs at once (the mutation runner slices a
+# slow suite, CI matrices share runners) used to overwrite each other's output.
+PG_CV="$(mktemp)"; PG_TOOL="$(mktemp)"
+trap 'rm -f "$PG_CV" "$PG_TOOL"' EXIT
 
 # A JSON validator that degrades gracefully (jq → python3 → node → SKIP).
 json_ok() { # json_ok <file>
@@ -60,7 +64,7 @@ caso_verify() { # caso_verify <name> <expected-exit> <setup-fn> <assert-fn> [ver
     git add -A && git commit -qm change
   ) >/dev/null 2>&1
   local code=0
-  ( cd "$tmp" && bash "$VERIFY" "$@" ) >/tmp/pg-cv.out 2>&1 || code=$?
+  ( cd "$tmp" && bash "$VERIFY" "$@" ) >"$PG_CV" 2>&1 || code=$?
   local ok=1
   [ "$code" = "$esperado" ] || ok=0
   if [ -n "$assert" ]; then ( cd "$tmp" && "$assert" ) || ok=0; fi
@@ -111,7 +115,7 @@ caso_tool() { # caso_tool <name> <expected-exit> <setup-fn> <assert-fn> -- <scri
   local code=0
   # </dev/null matters: a tool that reads stdin by accident must fail the test,
   # not hang the suite. (pg_sha1 with a missing path did exactly that once.)
-  ( cd "$tmp" && PROOFGATE_LIB="$LIB" bash "$script" "$@" </dev/null ) >/tmp/pg-tool.out 2>&1 || code=$?
+  ( cd "$tmp" && PROOFGATE_LIB="$LIB" bash "$script" "$@" </dev/null ) >"$PG_TOOL" 2>&1 || code=$?
   local ok=1
   [ "$code" = "$esperado" ] || ok=0
   if [ -n "$assert" ]; then ( cd "$tmp" && "$assert" ) || ok=0; fi
@@ -504,8 +508,8 @@ setup_projguard() {
   printf '#!/usr/bin/env bash\necho "project guard ran"\nexit 0\n' > mine/90-project-only.sh
   echo 'x' > a.ts
 }
-a_projguard_ran()  { grep -q "project guard ran" /tmp/pg-cv.out; }
-a_names_both_dirs() { grep -q "guards.d" /tmp/pg-cv.out && grep -q "mine" /tmp/pg-cv.out; }
+a_projguard_ran()  { grep -q "project guard ran" "$PG_CV"; }
+a_names_both_dirs() { grep -q "guards.d" "$PG_CV" && grep -q "mine" "$PG_CV"; }
 
 caso_verify "engine: green repo → exit 0 + valid verdict" 0 setup_clean a_verdict_valid
 caso_verify "engine: verdict sha == HEAD"                 0 setup_clean a_sha_matches
@@ -527,8 +531,8 @@ caso_verify "engine: --dry-run writes NO verdict"         0 setup_clean a_no_ver
 # inspect a docs-only diff and every one reports "nothing touched", which reads as
 # approval. They cannot detect it from the inside, so the engine warns.
 setup_docsonly()   { echo "# notes" > NOTES.md; }
-a_sourceless()     { grep -q "sourceless-diff" /tmp/pg-cv.out; }
-a_not_sourceless() { ! grep -q "sourceless-diff" /tmp/pg-cv.out; }
+a_sourceless()     { grep -q "sourceless-diff" "$PG_CV"; }
+a_not_sourceless() { ! grep -q "sourceless-diff" "$PG_CV"; }
 caso_verify "engine: docs-only diff → warns the guards were blind" 0 setup_docsonly a_sourceless
 caso_verify "engine: diff with source → no blind-gate warning"     0 setup_clean a_not_sourceless
 
@@ -544,9 +548,9 @@ caso_verify "engine: verdict is schemaVersion 2"                  0 setup_clean 
 caso_verify "engine: verdict has exactly one sha + one pass, one line" 0 setup_clean a_one_sha
 caso_verify "engine: verdict carries the impact risk class"       0 setup_clean a_has_impact
 caso_verify "engine: verdict carries required_level"              0 setup_clean a_required
-a_impact_line() { grep -q "impact: L" /tmp/pg-cv.out; }
+a_impact_line() { grep -q "impact: L" "$PG_CV"; }
 caso_verify "engine: prints the blast-radius line"                0 setup_clean a_impact_line
-a_no_impact_line() { ! grep -q "impact: L" /tmp/pg-cv.out; }
+a_no_impact_line() { ! grep -q "impact: L" "$PG_CV"; }
 caso_verify "engine: --no-impact skips it"                        0 setup_clean a_no_impact_line --no-impact
 
 echo "══ impact: the blast radius ════════════════════════════════"
@@ -726,7 +730,7 @@ caso_verify "engine: clean ledger → chain_ok"                          0 setup
 setup_forged() { mkdir -p src; echo 'export const x=1;' > src/a.ts
                  mkdir -p .git
                  printf '{"id":"c-forged","sha":"%s","kind":"central","level_recorded":"E4","prev":"deadbeef"}\n' "$(git rev-parse HEAD 2>/dev/null || echo x)" > .git/proofgate-claims.jsonl; }
-a_chain_fail() { grep -q "ledger-chain" /tmp/pg-cv.out; }
+a_chain_fail() { grep -q "ledger-chain" "$PG_CV"; }
 caso_verify "engine: forged ledger row → ledger-chain FAIL" 1 setup_forged a_chain_fail
 
 echo "══ hooks ═══════════════════════════════════════════════════"
@@ -1472,6 +1476,178 @@ ac=0; ( cd "$AU" && printf 'not json' | bash "$ROOT/hooks/audit-hook.sh" ) >/dev
 ok_t "$([ "$ac" = 0 ] && echo 1 || echo 0)" "audit: malformed stdin → fail-open"
 rm -rf "$AU"
 
+echo "══ mutation --list: a curated list, judged three ways ═══════"
+MUTL="$ROOT/skills/proofgate/scripts/mutate.mjs"
+MUTG="$GUARDS/88-mutation.sh"
+if command -v node >/dev/null 2>&1; then
+  mu_repo() { # a toy project: one rule (round), a floor, a suite that only checks the round
+    local d; d="$(mktemp -d)"
+    ( cd "$d" && git init -q -b main && git config user.email t@t && git config user.name t && mkdir src \
+      && printf 'exports.round = (x) => Math.round(x);\nexports.floor1 = (n) => Math.max(1, n);\n' > src/price.js \
+      && printf '#!/bin/sh\nnode -e "const p=require(\\"./src/price.js\\"); if (p.round(2.5)!==3) process.exit(1)"\n' > test.sh && chmod +x test.sh \
+      && printf '{"mutation":{"list":"m.jsonl","command":"./test.sh"}}\n' > proofgate.json \
+      && printf '{"file":"src/price.js","from":"Math.round(x)","to":"Math.floor(x)","hurts":"a price rounded down sells under cost"}\n' > m.jsonl \
+      && git add -A && git commit -qm base ) >/dev/null 2>&1
+    echo "$d"
+  }
+  mu() { local d="$1"; shift; local c=0; ( cd "$d" && node "$MUTL" --list m.jsonl "$@" ) > "$d/mu.out" 2>&1 || c=$?; echo "$c"; }
+  mu_guard() { local c=0; ( cd "$1" && PROOFGATE_BASE="${2:-HEAD}" PROOFGATE_CFG=proofgate.json bash "$MUTG" ) > "$1/g.out" 2>&1 || c=$?; echo "$c"; }
+  mu_ok() { [ "$1" = "$2" ] && echo 1 || echo 0; }
+
+  # the runner
+  MD="$(mu_repo)"
+  ok_t "$(mu_ok "$(mu "$MD" -- ./test.sh)" 0)" "mutate --list: a mutation the suite sees → caught, exit 0"
+  ok_t "$(grep -q '1 caught, 0 equivalent, 0 survived, 0 not measured' "$MD/mu.out" && echo 1 || echo 0)" "mutate --list: the report's arithmetic closes (1 caught)"
+  printf '{"file":"src/price.js","from":"Math.max(1, n)","to":"n","hurts":"a zero quantity gets through the floor"}\n' >> "$MD/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$MD" -- ./test.sh)" 1)" "mutate --list: a mutation the suite cannot see → SURVIVED, exit 1 (positive)"
+  ok_t "$(grep -q 'SURVIVED' "$MD/mu.out" && grep -q 'zero quantity' "$MD/mu.out" && echo 1 || echo 0)" "mutate --list: the survivor is named with the damage sentence"
+  ok_t "$(git -C "$MD" diff --quiet -- src test.sh && echo 1 || echo 0)" "mutate --list: the working tree is never touched"
+
+  # not measured is NOT caught
+  MU="$(mu_repo)"
+  printf '#!/bin/sh\nif grep -q "Math.floor" src/price.js; then sleep 5; fi\nnode -e "const p=require(\\"./src/price.js\\"); if (p.round(2.5)!==3) process.exit(1)"\n' > "$MU/test.sh"
+  ok_t "$(mu_ok "$(mu "$MU" --timeout 1 -- ./test.sh)" 1)" "mutate --list: a suite killed by timeout is NOT MEASURED, never 'caught' (exit 1)"
+  ok_t "$(grep -q '0 caught, 0 equivalent, 0 survived, 1 not measured' "$MU/mu.out" && echo 1 || echo 0)" "mutate --list: unmeasured is counted on its own line of the arithmetic"
+
+  # anchors: stale and ambiguous are unmeasured, and --check says so without running anything
+  MA="$(mu_repo)"
+  printf '{"file":"src/price.js","from":"no longer here","to":"x","hurts":"stale"}\n{"file":"src/price.js","from":"Math.","to":"Nath.","hurts":"ambiguous"}\n' >> "$MA/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$MA" --check)" 1)" "mutate --check: stale + ambiguous anchors → exit 1, no suite run"
+  ok_t "$(mu_ok "$(mu "$MA" -- ./test.sh)" 1)" "mutate --list: a stale/ambiguous anchor fails the run (2 not measured)"
+  ok_t "$(mu_ok "$(mu "$(mu_repo)" --check)" 0)" "mutate --check: a clean list → exit 0 (negative)"
+
+  # equivalent: needs a reason, and being caught turns the marker into an error
+  ME="$(mu_repo)"
+  printf '{"file":"src/price.js","from":"Math.round(x)","to":"Math.floor(x)","hurts":"x","equivalent":"supposedly no test can tell"}\n' > "$ME/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$ME" -- ./test.sh)" 1)" "mutate --list: marked equivalent but CAUGHT → wrong marker, exit 1"
+  printf '{"file":"src/price.js","from":"exports.floor1 = (n) => Math.max(1, n);","to":"exports.floor1 = (n) => Math.max(1, n); /* c */","hurts":"x","equivalent":"a comment"}\n' > "$ME/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$ME" -- ./test.sh)" 0)" "mutate --list: a true equivalent, with its reason, is accepted (negative)"
+  printf '{"file":"src/price.js","from":"a","to":"b","hurts":"x","equivalent":""}\n' > "$ME/m.jsonl"
+  ok_t "$(mu_ok "$(mu "$ME" --check)" 2)" "mutate --list: an equivalent marker with no written reason → refused (exit 2)"
+
+  # judge sanity
+  MB="$(mu_repo)"
+  ok_t "$(mu_ok "$(mu "$MB" -- false)" 2)" "mutate --list: a red baseline → refused (exit 2), nothing is 'caught'"
+  MJ="$(mu_repo)"; printf '#!/bin/sh\nnode -e "if(require(\\"fs\\").readFileSync(\\"src/price.js\\",\\"utf8\\").endsWith(\\"\\\\n\\\\n\\"))process.exit(1)"\n' > "$MJ/test.sh"
+  ok_t "$(mu_ok "$(mu "$MJ" -- ./test.sh)" 2)" "mutate --list: a suite that fails a harmless sentinel → BROKEN JUDGE (exit 2)"
+  ok_t "$(mu_ok "$(mu "$(mu_repo)" --slice 3/2 -- ./test.sh)" 2)" "mutate --list: an invalid --slice is refused, not read as the whole list"
+  for bad in invalid -5 0; do
+    ok_t "$(mu_ok "$(mu "$(mu_repo)" --timeout "$bad" -- ./test.sh)" 2)" "mutate --list: --timeout $bad is a usage error (exit 2), not a crash"
+  done
+
+  # slices cover the list once; the verdict is complete only when every slice is in
+  MS="$(mu_repo)"
+  printf '{"file":"src/price.js","from":"Math.max(1, n)","to":"Math.min(1, n)","hurts":"floor becomes a ceiling"}\n' >> "$MS/m.jsonl"
+  sed -i.bak 's#test.sh#test.sh#' "$MS/m.jsonl" && rm -f "$MS/m.jsonl.bak"
+  printf '#!/bin/sh\nnode -e "const p=require(\\"./src/price.js\\"); if (p.round(2.5)!==3||p.floor1(0)!==1) process.exit(1)"\n' > "$MS/test.sh"
+  ok_t "$(mu_ok "$(mu "$MS" --slice 1/2 -- ./test.sh)" 0)" "mutate --slice 1/2: judges only its half"
+  ok_t "$(grep -q '1 mutation(s) (slice 1/2 of 2)' "$MS/mu.out" && echo 1 || echo 0)" "mutate --slice: the report says which slice of how many"
+  ok_t "$(mu_ok "$(mu "$MS" --status)" 2)" "mutate --status: one slice of two is an INCOMPLETE verdict → warn"
+  mu "$MS" --slice 2/2 -- ./test.sh >/dev/null
+  ok_t "$(mu_ok "$(mu "$MS" --status)" 0)" "mutate --status: both slices in → complete and recent (negative)"
+  ( cd "$MS" && sed 's#"ts": "[^"]*"#"ts": "2020-01-01T00:00:00.000Z"#' .git/proofgate-mutation.json > v.tmp && mv v.tmp .git/proofgate-mutation.json )
+  ok_t "$(mu_ok "$(mu "$MS" --status --max-age-days 14)" 2)" "mutate --status: a verdict years old → stale, warn"
+  rm -rf "$MS"
+
+  # the guard
+  MG="$(mu_repo)"
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 2)" "88-mutation: configured, never run → WARN (no verdict)"
+  mu "$MG" -- ./test.sh >/dev/null
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 0)" "88-mutation: list present, anchors match, fresh verdict → ✅ (negative)"
+  printf 'exports.round = (x) => Math.round(x); // edited\nexports.floor1 = (n) => Math.max(1, n);\n' > "$MG/src/price.js"
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 2)" "88-mutation: a mutated file changed since the verdict → WARN"
+  git -C "$MG" checkout -q src/price.js
+  printf '{"file":"src/price.js","from":"vanished","to":"x","hurts":"stale"}\n' >> "$MG/m.jsonl"
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 1)" "88-mutation: a stale anchor → FAIL (cannot be planted)"
+  rm -f "$MG/m.jsonl"
+  ok_t "$(mu_ok "$(mu_guard "$MG")" 1)" "88-mutation: configured list missing → FAIL"
+  rm -rf "$MG"
+  MN="$(mktemp -d)"; ( cd "$MN" && git init -q && git commit -qm b --allow-empty ) >/dev/null 2>&1
+  ok_t "$(mu_ok "$(mu_guard "$MN")" 0)" "88-mutation: not configured → one line, exit 0 (existing projects are not broken)"
+  ok_t "$(grep -q 'not configured' "$MN/g.out" && echo 1 || echo 0)" "88-mutation: the silence says WHY it is silent"
+  rm -rf "$MN"
+
+  # rule-bearing file changed: warn with no new mutation, pass with one
+  MR="$(mu_repo)"; ( cd "$MR" && mu_run() { :; }; node "$MUTL" --list m.jsonl -- ./test.sh >/dev/null 2>&1 )
+  ( cd "$MR" && git checkout -q -b feature && mkdir -p src && printf 'exports.tax = (x) => x * 2;\n' > src/pricing.js && git add -A && git commit -qm "rule" ) >/dev/null 2>&1
+  ok_t "$(mu_ok "$(mu_guard "$MR" main)" 2)" "88-mutation: pricing file changed, no new mutation → WARN (positive)"
+  grep -q 'no new mutation' "$MR/g.out" && ok_t 1 "88-mutation: the warning names the cause" || ok_t 0 "88-mutation: the warning names the cause"
+  ( cd "$MR" && printf '{"file":"src/pricing.js","from":"x * 2","to":"x * 3","hurts":"tax doubled instead of tripled"}\n' >> m.jsonl && git add -A && git commit -qm "mutation" && node "$MUTL" --list m.jsonl -- ./test.sh >/dev/null 2>&1 )
+  ok_t "$(mu_ok "$(mu_guard "$MR" main)" 2)" "88-mutation: a new mutation the suite never sees → the verdict records a SURVIVOR → WARN, not ✅"
+  rm -rf "$MR" "$MD" "$MU" "$MA" "$ME" "$MB" "$MJ"
+else
+  echo "SKIP  mutate --list (no node)"
+fi
+
+echo "══ cfg: a configured FALSE is a value, not an absence ═══════"
+CFD="$(mktemp -d)"; printf '{"pushGuard": false, "on": true, "n": 0, "s": "", "nested": {"off": false}}\n' > "$CFD/proofgate.json"
+cfg_in() { ( cd "$CFD" && PROOFGATE_CFG=proofgate.json bash -c ". '$LIB'; cfg '$1'" ); }
+ok_t "$([ "$(cfg_in .pushGuard)" = "false" ] && echo 1 || echo 0)" "cfg: \"pushGuard\": false reads back as false (the documented emergency switch)"
+ok_t "$([ "$(cfg_in .nested.off)" = "false" ] && echo 1 || echo 0)" "cfg: a nested false reads back as false"
+ok_t "$([ "$(cfg_in .on)" = "true" ] && [ "$(cfg_in .n)" = "0" ] && echo 1 || echo 0)" "cfg: true and 0 still read back (negative)"
+ok_t "$([ -z "$(cfg_in .missing)" ] && [ -z "$(cfg_in .nested.nope)" ] && echo 1 || echo 0)" "cfg: a key that is absent still prints nothing (negative)"
+rm -rf "$CFD"
+
+echo "══ upstream: what a project learns goes back to the gate ═════"
+# The rule "a mistake becomes a guard upstream" was prose in a project's CLAUDE.md and never
+# ran. These pin the three mechanical causes: no trigger (guard 91), a lesson that stays put
+# (diff/send) and an installer that erased the local guard on upgrade (keep-list).
+up_project() { # a consumer repo with the gate vendored by the REAL installer
+  local d; d="$(mktemp -d)"
+  ( cd "$d" && git init -q -b main && git config user.email t@t && git config user.name t \
+    && git commit -qm base --allow-empty && bash "$ROOT/install.sh" ) >/dev/null 2>&1
+  echo "$d"
+}
+up_guard() { ( cd "$1" && PROOFGATE_BASE=HEAD PROOFGATE_CFG=proofgate.json bash .proofgate/guards.d/91-upstream-drift.sh 2>&1 ); }
+up_code() { local c=0; up_guard "$1" >/dev/null || c=$?; echo "$c"; }
+
+UPD="$(up_project)"
+ok_t "$([ -f "$UPD/.proofgate/upstream.lock" ] && [ -f "$UPD/.proofgate/mutate.mjs" ] && [ -f "$UPD/.proofgate/upstream.sh" ] && echo 1 || echo 0)" "upstream: installer vendors EVERY script (upstream.sh, mutate.mjs) and writes the lock"
+ok_t "$([ "$(up_code "$UPD")" = 0 ] && echo 1 || echo 0)" "upstream-drift: a fresh install is clean (negative)"
+
+printf '#!/usr/bin/env bash\n# Guard: a lesson learned here.\necho "✅ mine: ok"\n' > "$UPD/.proofgate/guards.d/50-mine.sh"
+UOUT="$(up_guard "$UPD")"   # captured, not piped into grep -q: under pipefail an early-closing grep reads as SIGPIPE
+ok_t "$([ "$(up_code "$UPD")" = 2 ] && printf '%s' "$UOUT" | grep -q '50-mine.sh' && echo 1 || echo 0)" "upstream-drift: a guard added only here → WARN, named (positive)"
+
+( cd "$UPD" && printf '{"upstream":{"keepLocal":["50-mine.sh"]}}\n' > proofgate.json )
+ok_t "$([ "$(up_code "$UPD")" = 0 ] && echo 1 || echo 0)" "upstream-drift: declared project-specific (keepLocal) → silent (negative)"
+rm -f "$UPD/proofgate.json"
+
+# installer: the local guard and a locally-edited upstream guard both survive an upgrade
+echo "# learned here" >> "$UPD/.proofgate/guards.d/70-debug-leftovers.sh"
+( cd "$UPD" && bash "$ROOT/install.sh" ) >/dev/null 2>&1
+ok_t "$([ -f "$UPD/.proofgate/guards.d/50-mine.sh" ] && echo 1 || echo 0)" "installer: a guard that exists only in the project survives the upgrade"
+ok_t "$(grep -q 'learned here' "$UPD/.proofgate/guards.d/70-debug-leftovers.sh" && echo 1 || echo 0)" "installer: an upstream guard the project CHANGED is kept, not overwritten"
+ok_t "$([ "$(ls "$UPD"/.proofgate/guards.d/*.sh | sed -E 's#.*/[0-9]+-##' | sort | uniq -d | wc -l | tr -d ' ')" = 0 ] && echo 1 || echo 0)" "installer: no guard ends up twice under two numbers"
+
+# untouched here + moved upstream → overwritten (the lock says nobody here touched it)
+G="$UPD/.proofgate/guards.d/85-float-money.sh"; echo "# old copy" >> "$G"
+NEWH="$(git hash-object "$G")"; awk -v h="$NEWH" '/guards\.d\/85-float-money\.sh$/ { print h "  guards.d/85-float-money.sh"; next } { print }' "$UPD/.proofgate/upstream.lock" > "$UPD/lock.tmp" && mv "$UPD/lock.tmp" "$UPD/.proofgate/upstream.lock"
+( cd "$UPD" && bash "$ROOT/install.sh" ) >/dev/null 2>&1
+ok_t "$(grep -q 'old copy' "$G" && echo 0 || echo 1)" "installer: a file untouched here (== lock) is brought up to date"
+( cd "$UPD" && bash "$ROOT/install.sh" --force-upstream ) >/dev/null 2>&1
+ok_t "$([ -f "$UPD/.proofgate/guards.d/50-mine.sh" ] && echo 0 || echo 1)" "installer: --force-upstream overwrites what the project added (explicit only)"
+
+# a copy installed BEFORE the lock existed: the guard cannot know what was learned → silent
+rm -f "$UPD/.proofgate/upstream.lock"
+UOUT="$(up_guard "$UPD")"
+ok_t "$([ "$(up_code "$UPD")" = 0 ] && printf '%s' "$UOUT" | grep -q 'no upstream.lock' && echo 1 || echo 0)" "upstream-drift: no lock → says so and stays silent (legacy copy, negative)"
+
+# diff / send against a clone, on that legacy copy: everything differing is listed, none invented
+printf '#!/usr/bin/env bash\n# Guard: a lesson learned here.\n# The scar: it cost an afternoon.\necho "✅ mine: ok"\n' > "$UPD/.proofgate/guards.d/50-mine.sh"
+UPC="$(mktemp -d)"; cp -r "$ROOT/skills" "$ROOT/templates" "$UPC/" 2>/dev/null
+dcode=0; ( cd "$UPD" && bash .proofgate/upstream.sh diff "$UPC" ) > "$UPD/diff.out" 2>&1 || dcode=$?
+ok_t "$([ "$dcode" = 1 ] && grep -q 'local-only.*50-mine.sh' "$UPD/diff.out" && echo 1 || echo 0)" "upstream diff: a local-only guard is listed and the exit says there is something to send"
+ok_t "$(grep -E '^  local-only' "$UPD/diff.out" | grep -vq -E '50-mine' && echo 0 || echo 1)" "upstream diff: a file identical to upstream is NOT reported as learned (negative)"
+( cd "$UPD" && bash .proofgate/upstream.sh send "$UPC" ) > "$UPD/send.out" 2>&1
+SENT=""; for f in "$UPC"/skills/proofgate/scripts/guards.d/*-mine.sh; do [ -f "$f" ] && { SENT="$(basename "$f")"; break; }; done
+ok_t "$([ -n "$SENT" ] && [ "$SENT" = "51-mine.sh" ] && grep -q 'it cost an afternoon' "$UPD/send.out" && echo 1 || echo 0)" "upstream send: staged under a FREE number, with the guard's scar as the PR body seed"
+dc=0; ( cd "$UPD" && bash .proofgate/upstream.sh diff "$ROOT" >/dev/null 2>&1 ) || dc=$?
+rm -f "$UPD/.proofgate/guards.d/50-mine.sh" "$UPD/.proofgate/guards.d/50-mine.sh"
+dc2=0; ( cd "$UPD" && bash .proofgate/upstream.sh diff "$ROOT" >/dev/null 2>&1 ) || dc2=$?
+ok_t "$([ "$dc" = 1 ] && [ "$dc2" = 0 ] && echo 1 || echo 0)" "upstream diff: exit 1 while something is unsent, 0 once there is nothing (and only then)"
+rm -rf "$UPD" "$UPC"
+
 echo "══ portability + docs (the promises we make about ourselves) ═"
 # CI runs macOS: bash 3.2 and BSD userland. Every one of these constructs works on
 # the dev box and fails there — which is the worst possible failure, because the
@@ -1485,8 +1661,12 @@ else echo "FAIL  portability: non-portable construct(s):"; printf '%s\n' "$BASH4
 # The guard count is written in five places and was already wrong once (docs said
 # 18, guards.d held 19). Numbers a human maintains by hand drift; assert it.
 GN=$(find "$GUARDS" -name '*.sh' | grep -c . || true)
-DRIFT=$(grep -rlE "\b(1[0-9]|[2-9][0-9])[ ]?(diff )?guards" "$ROOT/README.md" "$ROOT/skills/proofgate/SKILL.md" "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$ROOT/action.yml" 2>/dev/null \
-  | while IFS= read -r f; do grep -oE "\b(1[0-9]|[2-9][0-9])[ ]?(diff )?guards" "$f" | grep -oE '^[0-9]+' | while IFS= read -r n; do [ "$n" = "$GN" ] || echo "$f says $n"; done; done)
+# Each file is read with its line breaks folded: "**27\ndiff guards**" in SKILL.md slipped past a
+# line-by-line grep and stayed wrong for a release.
+DRIFT=$(for f in "$ROOT/README.md" "$ROOT/skills/proofgate/SKILL.md" "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json" "$ROOT/action.yml"; do
+  [ -f "$f" ] || continue
+  tr '\n' ' ' < "$f" | sed 's/\*\*//g' | grep -oE "\b(1[0-9]|[2-9][0-9])[ ]*(diff )?guards" | grep -oE '^[0-9]+' | while IFS= read -r n; do [ "$n" = "$GN" ] || echo "$f says $n"; done
+done)
 if [ -z "$DRIFT" ]; then echo "PASS  docs: guard count matches guards.d ($GN)"; PASS=$((PASS + 1))
 else echo "FAIL  docs: guard count drift (guards.d has $GN):"; printf '%s\n' "$DRIFT" | sed 's/^/      /'; FAIL=$((FAIL + 1)); fi
 

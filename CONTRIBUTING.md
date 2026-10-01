@@ -40,6 +40,18 @@ a 20-line script would have caught at the gate.
    `ls guards.d` and fails on drift, because a number a human maintains by hand drifts.
 6. In the PR description, tell the scar: what shipped broken the day this
    became a rule. (Seriously. It's the project's whole aesthetic.)
+7. **Every defect you fix gains a mutation** in [`tests/mutations.jsonl`](tests/mutations.jsonl):
+   the defect a hurried person would introduce, one sentence about its damage. It is the
+   cheapest proof that the test you wrote beside the fix can see. `node
+   skills/proofgate/scripts/mutate.mjs --list tests/mutations.jsonl --check` confirms every
+   anchor still matches in milliseconds; a full run costs ~100 s per entry (`--slice i/n`).
+
+## Coming from a project that vendors the gate?
+
+If a guard or a fix was born in your project, don't hand-copy it: `bash .proofgate/upstream.sh
+diff <clone of this repo>` lists what differs and which way it moved, and `… send <clone>`
+stages your guards in the clone with each scar header as the PR body's first paragraph. A sent
+guard is a draft until steps 4–5 above are done.
 
 ## What makes a good guard
 

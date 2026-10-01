@@ -88,5 +88,9 @@ to fix what was never broken.
 A CONFIRMED is likewise capped at the level the ledger recorded. Your agreement is not a
 run, and cannot raise E2 evidence to E3.
 
+Mirror of SKILL.md's mutation list: when a project keeps one (`mutate.mjs --list`), a
+mutation whose suite did **not run** is *not measured* — never "caught". Do not count it
+as evidence that a rule is covered; a stale or ambiguous anchor is a failure, not a pass.
+
 Be brutally concise. Finish with a one-line bottom line: is this delivery honestly done,
 and if not, the single most important thing left to prove.

@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/ChrnX0/proofgate/main/install.sh | 
 bash .proofgate/verify.sh
 ```
 
-No config. ProofGate auto-detects your stack (pnpm · npm · yarn · bun · Cargo · Go · Python · Gradle/Maven · .NET · Ruby · PHP · Elixir · Deno) and judges **the diff you're about to ship** with 29 guards:
+No config. ProofGate auto-detects your stack (pnpm · npm · yarn · bun · Cargo · Go · Python · Gradle/Maven · .NET · Ruby · PHP · Elixir · Deno) and judges **the diff you're about to ship** with 31 guards:
 
 ```
 ── ProofGate · mechanical gate ─────────────────────────────
@@ -60,7 +60,7 @@ A **delivery gate** that sits between *"the code is written"* and *"the work is 
 | Layer | What | Who runs it |
 |---|---|---|
 | **0 · Blast radius** | what this diff can break — changed symbols, their callers, affected tests — over the **whole branch + your working tree**, classified **L1/L2/L3**. That class sets the price of the gate: docs pay E1, source pays E3, auth/money/migrations also pay a mandatory skeptic | a script — `impact.sh` |
-| **1 · Mechanical** | tests · lint · push state · **29 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, version-bumped-but-never-released, …) → a **SHA-bound verdict** | a script — `verify.sh` |
+| **1 · Mechanical** | tests · lint · push state · **31 diff guards** (secrets, PII-in-logs, TLS-off, merge markers, silenced tests/types, money-as-float, hand-built SQL, un-migrated schema constraints, version-bumped-but-never-released, …) → a **SHA-bound verdict** | a script — `verify.sh` |
 | **2 · Judgment** | root cause + counter-proof · an **evidence hierarchy** (believed → static → tested → exercised → in-prod; "done" needs ≥ exercised) · **diagnosis as a falsifiable hypothesis that survives a context compaction** · a status **generated from the ledger, never typed** | `claim.sh` · `hypothesis.sh` · `memory.sh` |
 | **3 · Adversarial** | a **default-refute panel**, sized to the radius, tries to break every "it works" claim — and every refutation is itself re-run, so a skeptic cannot assert a break either | `gate-skeptic` · `intent-skeptic` · `security-skeptic` |
 | **4 · Enforcement** | hooks refuse to `git push` — or (opt-in) to declare *done* — without a fresh passing verdict, and (opt-in) to edit source while a bugfix has no failing test | `push-guard` · `stop-guard` · `edit-guard` |
@@ -183,6 +183,34 @@ Language-agnostic — it only needs a file to edit and a command to run (`pytest
 
 **A surviving mutation is not a style note — it is a rule your suite claims to cover and does not.** On the delivery that motivated this tool, 47 mutations found 6 blind tests.
 
+### A project's own list — `mutate.mjs --list`
+
+Past a handful of mutations the list stops being a heredoc and becomes a **file the project owns** — a curated list of the defects that would actually hurt, one sentence of damage each:
+
+```jsonl
+{"file": "src/price.ts", "from": "Math.round(x)", "to": "Math.floor(x)", "hurts": "a price rounded down sells every unit a little under cost"}
+{"file": "src/price.ts", "from": "now < expiresAt", "to": "now > expiresAt", "hurts": "expired coupons work", "equivalent": "only when the clock is frozen — no test can tell"}
+```
+
+```sh
+node mutate.mjs --list mutations.jsonl --check                 # does every anchor still match exactly once? (ms, no suite)
+node mutate.mjs --list mutations.jsonl -- npm test             # judge them, in a COPY of the tree
+node mutate.mjs --list mutations.jsonl --slice 2/3 -- npm test # a third of the list; three slices cover it once
+node mutate.mjs --list mutations.jsonl --status                # is the last verdict still about this code?
+```
+
+The suite has **three** outcomes, not two — passed, failed, **not measured** (killed, timed out, command not found) — and "not measured" is never counted as caught. The copy must prove it can run the suite (an unmutated baseline plus a harmless sentinel edit) before anything is judged. A stale or ambiguous anchor is *unmeasured* and fails the run; `equivalent` needs a written reason and becomes an error if the suite catches it anyway. The rule that makes the list grow: **every defect you fix gains a mutation.**
+
+The hours stay out of the gate. Opt in with `"mutation": {"list": "mutations.jsonl", "command": "npm test"}` and [`88-mutation`](skills/proofgate/scripts/guards.d/88-mutation.sh) reads the list and the last verdict on every gate run, in milliseconds: list present, anchors match, verdict recent *and about the files as they are now*, and — the cheap one — a rule-bearing file changed with no new mutation. Without the config it prints one line saying so and stays out of the way.
+
+## 🔁 What your project learns goes back to the gate
+
+"A mistake a script would catch becomes a guard here" is a rule, and a rule written in prose protects nothing — the heaviest user of this tool had six guards and three fixes committed in its own repo, and **none had come back**. So the loop is mechanical:
+
+- **`91-upstream-drift`** warns on every gate run while your vendored `.proofgate/` holds something the gate does not (install writes `upstream.lock`, the hash of everything as shipped).
+- **`upstream.sh diff <clone>`** says what is local-only, what diverged and *which way* (the lock makes it three-way), and what you are behind on. **`upstream.sh send <clone>`** stages your guards in a clone of this repo, with each guard's scar header as the PR body's first paragraph. A guard is a draft until it has its positive and negative test ([CONTRIBUTING](CONTRIBUTING.md)).
+- **`install.sh` keeps what you learned.** It used to replace `guards.d/` wholesale; it now keeps every guard or script the project added or changed, never leaves one guard under two numbers, and only `--force-upstream` overwrites. Project-specific on purpose? List it under `upstream.keepLocal`.
+
 ## 🔌 Guards are plugins — and this repo eats its own dog food
 
 Every automated check is a small script in [`guards.d/`](skills/proofgate/scripts/guards.d/). Exit `0` pass · `1` fail · `2` warn. That's the whole API.
@@ -205,7 +233,9 @@ Every automated check is a small script in [`guards.d/`](skills/proofgate/script
 | `70-debug-leftovers` | `.only` focused tests · `debugger` · fresh TODOs | ❌ / ⚠️ |
 | `75-machine-paths` | `/home/<you>` / `C:\Users\…` hard-coded | ⚠️ |
 | `85-float-money` | money through a float (`parseFloat`, `.toFixed`) | ⚠️ |
+| `88-mutation` | the project's mutation list: missing · an anchor that no longer matches (**❌**) · a verdict that is old or about other code · a rule-bearing file changed with no new mutation. Opt-in by `mutation.list` | ❌ / ⚠️ |
 | `90-sql-concat` | SQL built by string concatenation | ⚠️ |
+| `91-upstream-drift` | this vendored copy holds guards or fixes the gate has never seen — the lesson stayed in one project | ⚠️ |
 | `93-hypothesis-required` | a fix branch with no recorded hypothesis — a cause never written down is never falsified | ⚠️ |
 | `94-two-release-publishers` | two workflows publish under a tag each computes itself | ⚠️ |
 | `95-schema-constraint-no-migration` | a constraint added to a table with no migration for it | ⚠️ |
@@ -214,7 +244,7 @@ Every automated check is a small script in [`guards.d/`](skills/proofgate/script
 | `98-unlearned-lessons` | an incident with nothing enforcing its lesson yet | ⚠️ |
 | `99-skeptic-required` | an L3 change with no adversarial pass — or one whose refutations still reproduce | ⚠️ / ❌ |
 
-**Every guard is proven on both paths** — fires on the sin, stays quiet on a clean diff — by [`tests/run-tests.sh`](tests/run-tests.sh) (**254 cases**, engine, hooks, ledgers and scripts included), on every push, on Linux **and** macOS, in [this repo's own CI](https://github.com/ChrnX0/proofgate/actions).
+**Every guard is proven on both paths** — fires on the sin, stays quiet on a clean diff — by [`tests/run-tests.sh`](tests/run-tests.sh) (**303 cases**, engine, hooks, ledgers and scripts included), on every push, on Linux **and** macOS, in [this repo's own CI](https://github.com/ChrnX0/proofgate/actions).
 
 On top of that, [`tests/acceptance.sh`](tests/acceptance.sh) drives **the whole protocol end to end in a real repository with a real remote** — 18 steps, from measuring the radius to detecting a tampered proof note. That distinction is not ceremony: it caught three defects the unit suite could not see — including one introduced by a fix that every unit test approved. Every piece obeying its spec is not the same as the path through them working — which is, more or less, this entire project's thesis applied to itself.
 

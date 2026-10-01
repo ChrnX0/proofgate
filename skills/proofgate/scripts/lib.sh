@@ -49,7 +49,13 @@ except Exception:
 cfg() {
   local path="$1" f; f="$(_pg_cfg_file)"
   [ -f "$f" ] || return 0
-  if command -v jq >/dev/null 2>&1; then jq -c -r "$path // empty" "$f" 2>/dev/null; return; fi
+  # `$path // empty` swallowed a boolean FALSE: in jq `//` treats false as absent, so
+  # `"pushGuard": false` - the emergency switch push-guard.sh documents and compares against
+  # "false" - printed nothing, and the guard blocked forever with a message telling you to use
+  # the very key that did not work. Absence is tested against null, which is what absent means.
+  # (Found by a project that vendors this lib, fixed there on 2026-09-05, never sent back -
+  # which is the gap upstream.sh closes. The node/python walkers below already kept false.)
+  if command -v jq >/dev/null 2>&1; then jq -c -r "($path) as \$v | if \$v == null then empty else \$v end" "$f" 2>/dev/null; return; fi
   if command -v node >/dev/null 2>&1; then node -e "$_PG_NODE_WALK" "$f" "$path" 2>/dev/null; return; fi
   command -v python3 >/dev/null 2>&1 && python3 -c "$_PG_PY_WALK" "$f" "$path" 2>/dev/null
 }
