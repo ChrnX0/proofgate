@@ -1658,6 +1658,21 @@ BASH4=$(grep -nE 'declare -A|mapfile|readarray|\$\{[A-Za-z_]+(,,|\^\^)|sed -i |w
 if [ -z "$BASH4" ]; then echo "PASS  portability: no bash4/GNU-only constructs"; PASS=$((PASS + 1))
 else echo "FAIL  portability: non-portable construct(s):"; printf '%s\n' "$BASH4" | sed 's/^/      /'; FAIL=$((FAIL + 1)); fi
 
+# ── 45-broad-process-kill ─────────────────────────────────────────────────────
+# The sin: killing by NAME PATTERN. The pattern cannot tell the stale process from the
+# one just started, so a whole verification cycle dies to the very command meant to clean up.
+plant_pkillpattern() { printf '#!/usr/bin/env bash\npkill -f "verify.sh"\n' > stop.sh; }
+plant_killpgrep()    { printf '#!/usr/bin/env bash\nkill -9 $(pgrep -f worker)\n' > stop.sh; }
+plant_killpgrepbare() { printf '#!/usr/bin/env bash\nkill $(pgrep -f worker)\n' > stop.sh; }
+plant_killpid()      { printf '#!/usr/bin/env bash\nkill "$PID_FILE_VALUE"\n' > stop.sh; }
+# Prose that QUOTES the sin (a runbook warning against it) is not the sin.
+plant_pkilldoc()     { printf 'Never run pkill -f on a worker; kill the recorded PID.\n' > RUNBOOK.md; }
+caso "broad-process-kill: pkill by pattern → WARN"           2 45-broad-process-kill.sh plant_pkillpattern
+caso "broad-process-kill: kill \$(pgrep ...) → WARN"         2 45-broad-process-kill.sh plant_killpgrep
+caso "broad-process-kill: bare kill \$(pgrep ...) → WARN"     2 45-broad-process-kill.sh plant_killpgrepbare
+caso "broad-process-kill: kill of a recorded PID → pass"     0 45-broad-process-kill.sh plant_killpid
+caso "broad-process-kill: sin quoted in a .md → pass"        0 45-broad-process-kill.sh plant_pkilldoc
+
 # The guard count is written in five places and was already wrong once (docs said
 # 18, guards.d held 19). Numbers a human maintains by hand drift; assert it.
 GN=$(find "$GUARDS" -name '*.sh' | grep -c . || true)

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Guard `45-broad-process-kill`, sent back from a project that vendors the gate.** The scar:
+  `pkill -f "verify.sh"` was run to stop a stale verification and killed the one just started,
+  because the old run and the new one match the same name. A whole cycle was lost, and the output
+  looked like a crash rather than a self-inflicted kill — the next twenty minutes went to debugging
+  a phantom. Warns on added lines that select victims by pattern (`pkill`, `killall`,
+  `kill $(pgrep …)`, `taskkill /IM`); prose in `.md` is exempt. Guard count 31 → 32.
+
 ## 3.4.0 — 2026-09-30
 
 A lesson that stays in one project protects that project only — and a mutation list is only worth having if the gate can tell when it has gone stale.
