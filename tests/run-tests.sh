@@ -211,8 +211,22 @@ caso "pii-logging: benign log → pass"            0 20-pii-logging.sh plant_log
 # ── 25-silent-catch ───────────────────────────────────────────────────────────
 plant_catch()  { echo 'try { pay() } catch (e) {}' > a.ts; }
 plant_okcatch(){ echo 'try { pay() } catch (e) { log(e) }' > a.ts; }
+# The sin has to BE code, not a sentence about code. In ChrnX0/Norva this guard
+# reported two muted handlers on a branch with zero of them: both hits were DOCBLOCK
+# PROSE writing the words `catch {}` to say it is *not* the disease. `:(exclude)*.md`
+# does not help — a docblock lives in the .ts. Same cure as 70-debug-leftovers, same
+# repo as the witness. These are the real lines, with the words that were in them.
+plant_catch_prosa()  { printf ' * **E isto NAO e o `catch {}` que esta casa chama de doenca**, e a\n * diferenca e o que fica.\nconst a = 1;\n' > a.ts; }
+plant_catch_slash()  { printf '// nunca escreva catch (e) {} num caminho de dinheiro\nconst a = 1;\n' > a.ts; }
+# The sin BEGINS the line in Python, so the prefix test cannot consume a character.
+plant_except_pass()  { printf 'try:\n    pay()\nexcept: pass\n' > a.py; }
+plant_except_prosa() { printf '# never write except: pass on a money path\nx = 1\n' > a.py; }
 caso "silent-catch: empty catch → WARN"          2 25-silent-catch.sh plant_catch
 caso "silent-catch: handled catch → pass"        0 25-silent-catch.sh plant_okcatch
+caso "silent-catch: jsdoc prose mention → pass"  0 25-silent-catch.sh plant_catch_prosa
+caso "silent-catch: // comment mention → pass"   0 25-silent-catch.sh plant_catch_slash
+caso "silent-catch: except: pass at BOL → WARN"  2 25-silent-catch.sh plant_except_pass
+caso "silent-catch: # prose mention → pass"      0 25-silent-catch.sh plant_except_prosa
 
 # ── 30-untested-changes ───────────────────────────────────────────────────────
 plant_src()    { mkdir -p src && echo "export const x = 1;" > src/a.ts; }
@@ -299,6 +313,21 @@ plant_debug()  { echo 'debugger; // wip' > a.ts; }
 caso "debug: it.only → FAIL"                     1 70-debug-leftovers.sh plant_only
 caso "debug: debugger → WARN"                    2 70-debug-leftovers.sh plant_debug
 caso "debug: clean diff → pass"                  0 70-debug-leftovers.sh plant_clean
+# A marca tem que parecer uma marca. `\b(TODO)\b` casava a PALAVRA, e em português
+# "todo" é palavra comum — num commit real do ChrnX0/Norva o guard acusou três
+# marcas frescas e as três eram prosa em português. Guard que acusa o que não
+# existe ensina a ignorar o que ele diz, e aí o TODO de verdade passa junto.
+plant_todo_marca()  { printf '// TODO: voltar aqui\nconst a = 1;\n' > a.ts; }
+plant_todo_autor()  { printf 'const a = 1; // TODO(alice): rever\n' > a.ts; }
+plant_todo_hash()   { printf '# FIXME rever isto\nx = 1\n' > a.py; }
+# Prosa em português: "todo" em maiúscula por ênfase, dentro de uma frase.
+plant_todo_prosa()  { printf '// Apagar compras leva TODO movimento da fábrica.\nconst a = 1;\n' > a.ts; }
+plant_todo_frase()  { printf 'const m = "isso apaga TODO o livro-razão";\n' > a.ts; }
+caso "debug: // TODO: marker → WARN"             2 70-debug-leftovers.sh plant_todo_marca
+caso "debug: TODO(author): marker → WARN"        2 70-debug-leftovers.sh plant_todo_autor
+caso "debug: # FIXME after opener → WARN"        2 70-debug-leftovers.sh plant_todo_hash
+caso "debug: Portuguese 'TODO' in prose → pass"  0 70-debug-leftovers.sh plant_todo_prosa
+caso "debug: Portuguese 'TODO' in string → pass" 0 70-debug-leftovers.sh plant_todo_frase
 
 # ── 75-machine-paths ──────────────────────────────────────────────────────────
 plant_home()   { echo 'const p = "/home/alice/proj/x";' > a.ts; }
