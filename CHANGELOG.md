@@ -1,8 +1,21 @@
 # Changelog
 
-## Unreleased
+## 3.5.0 — 2026-10-07
 
 ### Added
+
+- **Excuse-buster row: a click-path is a claim about the world, not knowledge.** The scar, sent back
+  from a project that vendors the gate: the agent told its user to go to "Database → Backups →
+  download the latest" on a hosted-Postgres dashboard. That button does not exist on the free plan —
+  the screen shows every backup as physical, with `Restore` as the only action, because downloadable
+  logical backups are a paid feature. The user found out by going there and not finding it, which is
+  the worst way for anyone to learn it. The row names the failure mode (knowing how a vendor's
+  console *used to* look is E0, and consoles move and vary by tier), the verification (read the
+  vendor's own docs before telling anyone where to click), and the corollary that matters more than
+  the instruction itself: **when there is a choice, ship the automated path instead of the manual
+  steps.** The real fix there was not better directions, it was a workflow that ran the dump by
+  itself. No guard: this failure ships in prose, in chat, never in a diff — the table is the highest
+  protection level reachable for it.
 
 - **Guard `45-broad-process-kill`, sent back from a project that vendors the gate.** The scar:
   `pkill -f "verify.sh"` was run to stop a stale verification and killed the one just started,
